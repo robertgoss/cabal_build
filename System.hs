@@ -16,11 +16,12 @@ default (T.Text)
 packageList :: IO [String]
 packageList = shelly . silently . liftM (map T.unpack) $ packageListSh
 
---Run the list command and split the resultant output into lines.
+--Run the list command and split the resultant output into lines
+-- We do a replace to change the output format to the standard packagename format.
 packageListSh :: Sh [T.Text]
-packageListSh = liftM T.lines $ run "cabal" ["list","--simple"]
-
-
+packageListSh = liftM processOutput $ run "cabal" ["list","--simple"]
+	where processOutput = T.lines . T.replace " " "-"
+	
 --Given the current package-name find the dependent packages that would need
 -- to be installed. This is wrapped in a maybe to detect a failure in resolution.
 dependencies :: String -> IO (Maybe [String])
