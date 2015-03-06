@@ -6,6 +6,7 @@ module System(packageList,dependencies,build) where
 --Import of shelly library - it defaults to using Text instead of string
 --  This reduces coercion for literals by default to Text.
 import Shelly
+import Control.Monad(liftM)
 import qualified Data.Text as T
 default (T.Text)
 
@@ -13,22 +14,22 @@ default (T.Text)
 
 --Get the list of names of all currently available packages to the cabal system
 packageList :: IO [String]
-packageList = shelly . silently $ packageListSh
+packageList = shelly . silently . liftM (map T.unpack) $ packageListSh
 
-packageListSh :: Sh [String]
+packageListSh :: Sh [T.Text]
 packageListSh = undefined
 
 --Given the current package-name find the dependent packages that would need
 -- to be installed. This is wrapped in a maybe to detect a failure in resolution.
 dependencies :: String -> IO (Maybe [String])
-dependencies = shelly . silently . dependenciesSh
+dependencies = shelly . silently . liftM (fmap (map T.unpack)) . dependenciesSh
 
-dependenciesSh :: String -> Sh (Maybe [String])
+dependenciesSh :: String -> Sh (Maybe [T.Text])
 dependenciesSh = undefined
 
 --Build the current list of packages return the success or failure of the build.
 build :: [String] -> IO Bool
-build = shelly . silently . buildSh
+build = shelly . silently . errExit False . buildSh -- Use exitErr as we will be checking lastExitCode rather than for an exception.
 
 buildSh :: [String] -> Sh Bool
 buildSh = undefined
