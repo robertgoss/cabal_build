@@ -7,7 +7,7 @@ module Package(PackageName, PackageDependencies, Package, PackageDatabase(),
 import Data.Map as Map
 
 type PackageName = String
-type PackageDependencies = [PackageName]
+type PackageDependencies = Maybe [PackageName] -- Wrapped in a maybe to indicate if dependencies could not be resolved.
 
 data Package = Package { name :: String,
 		                 version :: [Int],
