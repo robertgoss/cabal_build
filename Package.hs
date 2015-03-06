@@ -4,6 +4,7 @@ module Package(PackageName, PackageDependencies, Package, PackageDatabase(),
 	           packageList, getPackage, getVersions
 	          ) where
 
+import qualified System
 import Data.Map as Map
 
 type PackageName = String
@@ -18,38 +19,46 @@ data Package = Package { name :: String,
 --Get the full package nae of a package. This is in the form name-version. This will
 -- be used as an internal reference to the package in the package database below.
 packageName :: Package -> PackageName 
+packageName = undefined
 
-newtype PackageDatabase = PackageDatabase Map.Map PackageName PackageDependencies
+newtype PackageDatabase = PackageDatabase (Map.Map PackageName PackageDependencies)
 
 
 --Basic constructors of the full package database - either from a file or directly computed from system.
 --  These are the only constructors to be exported from this module so no partially constructed databases are made.
 fromSystem :: IO PackageDatabase
+fromSystem = undefined
 
 --Sub contructors used internally in this module to construct the package database from the system
 
 --  Add package to the database
 addPackage :: Package -> PackageDatabase -> PackageDatabase
+addPackage = undefined
 
 --  Construct a package from it's name by querying the system
 packageFromSystem :: PackageName -> IO Package
+packageFromSystem = undefined
 
 --  Get the dependencies for a given package by querying the system
 packageDependenciesFromSystem :: PackageName -> IO PackageDependencies 
+packageDependenciesFromSystem = undefined
 
 --  Get the list of all availible packages from the system
 packageListFromSystem :: IO [PackageName]
+packageListFromSystem = System.packageList
 
 
 --Properties of the package database that can be extracted
 
 --The list of available packages
 packageList :: PackageDatabase -> [Package]
+packageList = undefined
 
 --Get package from the database from it's package name
 getPackage :: PackageDatabase -> PackageName -> Package
+getPackage = undefined
 
 --Get all versions of a given package in the database
 getVersions :: PackageDatabase -> Package -> [Package]
-
+getVersions = undefined
 
