@@ -16,8 +16,10 @@ default (T.Text)
 packageList :: IO [String]
 packageList = shelly . silently . liftM (map T.unpack) $ packageListSh
 
+--Run the list command and split the resultant output into lines.
 packageListSh :: Sh [T.Text]
-packageListSh = undefined
+packageListSh = liftM T.lines $ run "cabal" ["list","--simple"]
+
 
 --Given the current package-name find the dependent packages that would need
 -- to be installed. This is wrapped in a maybe to detect a failure in resolution.
