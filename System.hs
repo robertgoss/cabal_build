@@ -1,7 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ExtendedDefaultRules #-}
 {-# OPTIONS_GHC -fno-warn-type-defaults #-}
-module System(packageList,dependencies,build) where
+module System(packageList,dependencies,build,
+	          cleanCabalSystem) where
 
 --Import of shelly library - it defaults to using Text instead of string
 --  This reduces coercion for literals by default to Text.

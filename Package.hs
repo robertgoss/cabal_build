@@ -45,7 +45,8 @@ newtype PackageDatabase = PackageDatabase (Map.Map PackageName PackageDependenci
 -- Get the list of packagenames from the system and then iterativly add then to the system
 -- Calling system to get the dependance for the package
 fromSystem :: IO PackageDatabase
-fromSystem = do putStrLn "Loading package list..."
+fromSystem = do System.cleanCabalSystem -- Clean system so there are no local packages to mess dependencies.
+                putStrLn "Loading package list..."
                 packageNames <- packageListFromSystem
                 let totalPackages = show $ length packageNames
                 --Get the packages using packageFromSystem we add an enumeration to
