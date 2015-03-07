@@ -21,7 +21,7 @@ packageList = shelly . silently . liftM (map T.unpack) $ packageListSh
 packageListSh :: Sh [T.Text]
 packageListSh = liftM processOutput $ run "cabal" ["list","--simple"]
 	where processOutput = T.lines . T.replace " " "-"
-	
+
 --Given the current package-name find the dependent packages that would need
 -- to be installed. This is wrapped in a maybe to detect a failure in resolution.
 dependencies :: String -> IO (Maybe [String])
@@ -45,5 +45,17 @@ buildSh = undefined
 cleanCabalSystem :: IO ()
 cleanCabalSystem = shelly . silently $ cleanCabalSystemSh
 
+
+--Remove the ghc director to nuke the package database
+--Remove the build files in cabal/lib and cabal/bin
 cleanCabalSystemSh :: Sh ()
-cleanCabalSystemSh = undefined
+cleanCabalSystemSh = do home_env <- get_env_text "HOME"
+                        let home_path = T.replace "/n" "" home_env -- Get file path for the home directory from 
+                                                                   -- Env variable. Remove the extra \n
+                        rm_rf $ home_path </> ".ghc"
+                        rm_rf $ home_path </> ".cabal" </> "bin"
+                        rm_rf $ home_path </> ".cabal" </> "lib"
+                        rm_rf $ home_path </> ".cabal" </> "share"
+                        mkdir $  home_path </> ".cabal" </> "bin"
+                        mkdir $  home_path </> ".cabal" </> "lib"
+                        mkdir $  home_path </> ".cabal" </> "share"
