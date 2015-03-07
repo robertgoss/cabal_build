@@ -48,7 +48,9 @@ fromSystem = undefined
 
 --  Add package to the database
 addPackage :: Package -> PackageDatabase -> PackageDatabase
-addPackage = undefined
+addPackage package (PackageDatabase database) = PackageDatabase $ Map.insert name pDependencies database
+    where name = packageName package
+          pDependencies = dependencies package
 
 --  Construct a package from it's name by querying the system
 packageFromSystem :: PackageName -> IO Package
