@@ -5,7 +5,7 @@ module Package(PackageName, PackageDependencies, Package, PackageDatabase(),
               ) where
 
 import qualified System
-import qualified Data.Map as Map
+import qualified Data.Map.Lazy as Map
 import Data.List(intersperse)
 import Data.List.Split(splitOn)
 
@@ -34,6 +34,8 @@ splitPackageName packageName = (name , version)
           name = concat $ intersperse "-" nameParts
           version = map read $ splitOn "." verPart
 
+--We use a lazy map here so we only run the dependencies on the system when we want to 
+-- query a result
 newtype PackageDatabase = PackageDatabase (Map.Map PackageName PackageDependencies)
 
 

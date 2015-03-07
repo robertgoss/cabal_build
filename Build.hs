@@ -2,7 +2,7 @@ module Build() where
 
 import Package
 
-import Data.Map as Map
+import Data.Map.Lazy as Map
 
 data BuildData = BuildData { isPrimary :: Bool,
 							 package :: Package,
@@ -16,6 +16,7 @@ data BuildResult = BuildSuccess       -- Build complete success.
 
 data Build = Build BuildData BuildResult
             
+ --We use a lazy map here so we only need to run a build when we want to query a result
 data BuildDatabase = BuildDatabase (Map.Map BuildData BuildResult) -- Map of a build data to the result.
                                    (Map.Map PackageName BuildData) -- Map of package name to the primary build associated to it
 
