@@ -73,14 +73,26 @@ packageListFromSystem = System.packageList
 --Properties of the package database that can be extracted
 
 --The list of available packages
+--Uses the keys of the dependence map to get list of packageNames
 packageList :: PackageDatabase -> [Package]
-packageList = undefined
+packageList database = map (getPackage database) names
+    where names = Map.keys dependenceMap
+          (PackageDatabase dependenceMap) = database
 
 --Get package from the database from it's package name
 getPackage :: PackageDatabase -> PackageName -> Package
-getPackage = undefined
+getPackage database name = Package { name = packageName,
+                                     version = packageVersion,
+                                     dependencies = packageDependencies
+                                   }
+    where (PackageDatabase dependenceMap) = database
+          packageDependencies = dependenceMap Map.! name
+          (packageName, packageVersion) = splitPackageName name
 
 --Get all versions of a given package in the database
+-- Very inefficient it currently scans the full list of packages.
+-- TODO add cache to PackageDatabase
 getVersions :: PackageDatabase -> Package -> [Package]
-getVersions = undefined
-
+getVersions database package = filter sameName $ packageList database
+  where sameName otherPackage = name otherPackage == packageName
+        packageName = name package
