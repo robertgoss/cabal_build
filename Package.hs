@@ -41,7 +41,7 @@ packageFromSystem = undefined
 
 --  Get the dependencies for a given package by querying the system
 packageDependenciesFromSystem :: PackageName -> IO PackageDependencies 
-packageDependenciesFromSystem = undefined
+packageDependenciesFromSystem = System.dependencies
 
 --  Get the list of all availible packages from the system
 packageListFromSystem :: IO [PackageName]
