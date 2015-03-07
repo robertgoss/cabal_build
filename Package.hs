@@ -21,8 +21,8 @@ data Package = Package { name :: String,
 --Get the full package nae of a package. This is in the form name-version. This will
 -- be used as an internal reference to the package in the package database below.
 packageName :: Package -> PackageName 
-packageName = undefined
-
+packageName package = concat $ name package : "-" : map show (version package)
+ 
 
 --Split a package name into the name of the package and it's version number
 splitPackageName :: PackageName -> (String, [Int])
