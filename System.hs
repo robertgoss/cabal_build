@@ -49,8 +49,13 @@ dependenciesSh name = errExit False $ do depText <- run "cabal" ["install", pack
 build :: [String] -> IO Bool
 build = shelly . silently . errExit False . buildSh -- Use exitErr as we will be checking lastExitCode rather than for an exception.
 
+--Perform the build and check for success - then clean the system bak to it's original pristeen setting
 buildSh :: [String] -> Sh Bool
-buildSh = undefined
+buildSh names = do run_ "cabal" $ "install" : packages
+                   success <- lastExitCode
+                   cleanCabalSystemSh
+                   return $ success == 0
+    where packages = map T.pack names
 
 -- Internal commands to help manage the system state.
 
