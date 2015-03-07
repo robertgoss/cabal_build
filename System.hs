@@ -34,7 +34,7 @@ dependencies = shelly . silently . liftM (fmap (map T.unpack)) . dependenciesSh
 dependenciesSh :: String -> Sh (Maybe [T.Text])
 dependenciesSh name = errExit False $ do depText <- run "cabal" ["install", package , "--dry-run"]
                                          exitCode <- lastExitCode
-                                         if exitCode /= 0 then return . Just $ processOutput depText
+                                         if exitCode == 0 then return . Just $ processOutput depText
                                          	              else return Nothing
     where package = T.pack name
           --Process the output of the dry run into the dependencies
