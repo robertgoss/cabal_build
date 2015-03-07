@@ -50,7 +50,12 @@ addPackage = undefined
 
 --  Construct a package from it's name by querying the system
 packageFromSystem :: PackageName -> IO Package
-packageFromSystem = undefined
+packageFromSystem package = do packageDependencies <- packageDependenciesFromSystem package
+                               return Package { name = packageName ,
+                                                version = packageVersion,
+                                                dependencies = packageDependencies
+                                              } 
+    where (packageName, packageVersion) = splitPackageName package
 
 --  Get the dependencies for a given package by querying the system
 packageDependenciesFromSystem :: PackageName -> IO PackageDependencies 
