@@ -41,10 +41,19 @@ newtype PackageDatabase = PackageDatabase (Map.Map PackageName PackageDependenci
 
 --Basic constructors of the full package database - either from a file or directly computed from system.
 --  These are the only constructors to be exported from this module so no partially constructed databases are made.
+-- Get the list of packagenames from the system and then iterativly add then to the system
+-- Calling system to get the dependance for the package
 fromSystem :: IO PackageDatabase
-fromSystem = undefined
+fromSystem = do packageNames <- packageListFromSystem
+                packages <- mapM packageFromSystem packageNames 
+                return $ foldl addPackage' emptyDatabase packages -- Swap arguments to add package to work with foldl
+  where addPackage' a b = addPackage b a -- Swap arguments
 
 --Sub contructors used internally in this module to construct the package database from the system
+
+--  Construct an empty database
+emptyDatabase :: PackageDatabase
+emptyDatabase = PackageDatabase Map.empty
 
 --  Add package to the database
 addPackage :: Package -> PackageDatabase -> PackageDatabase
