@@ -1,25 +1,38 @@
 module Package(PackageName, PackageDependencies, Package, PackageDatabase(),
-	           packageName,
-	           fromSystem,
-	           packageList, getPackage, getVersions
-	          ) where
+               packageName,
+               fromSystem,
+               packageList, getPackage, getVersions
+              ) where
 
 import qualified System
-import Data.Map as Map
+import qualified Data.Map as Map
+import Data.List(intersperse)
+import Data.List.Split(splitOn)
 
 type PackageName = String
 type PackageDependencies = Maybe [PackageName] -- Wrapped in a maybe to indicate if dependencies could not be resolved.
 
 data Package = Package { name :: String,
-		                 version :: [Int],
-		                 dependencies :: PackageDependencies
-		               }
+                         version :: [Int],
+                         dependencies :: PackageDependencies
+                       }
 
 --Properties of package
 --Get the full package nae of a package. This is in the form name-version. This will
 -- be used as an internal reference to the package in the package database below.
 packageName :: Package -> PackageName 
 packageName = undefined
+
+
+--Split a package name into the name of the package and it's version number
+splitPackageName :: PackageName -> (String, [Int])
+splitPackageName packageName = (name , version)
+    --The name is everything before the last - the version is everything after
+    where parts = splitOn "-" packageName
+          nameParts = init parts
+          verPart = last parts
+          name = concat $ intersperse "-" nameParts
+          version = map read $ splitOn "." verPart
 
 newtype PackageDatabase = PackageDatabase (Map.Map PackageName PackageDependencies)
 
