@@ -24,11 +24,26 @@ packageListSh = liftM processOutput $ run "cabal" ["list","--simple"]
 
 --Given the current package-name find the dependent packages that would need
 -- to be installed. This is wrapped in a maybe to detect a failure in resolution.
+-- We unpack the inner text into a string.
 dependencies :: String -> IO (Maybe [String])
 dependencies = shelly . silently . liftM (fmap (map T.unpack)) . dependenciesSh
 
+
+--Get dependencies by performing a dry-run installation.
+--Use errExit false as we will use lastExitCode to see if it failed then wrap result in a maybe
 dependenciesSh :: String -> Sh (Maybe [T.Text])
-dependenciesSh = undefined
+dependenciesSh name = errExit False $ do depText <- run "cabal" ["install", package , "--dry-run"]
+                                         exitCode <- lastExitCode
+                                         if exitCode /= 0 then return . Just $ processOutput depText
+                                         	              else return Nothing
+    where package = T.pack name
+          --Process the output of the dry run into the dependencies
+          --Split into lines, drop the first 2 lines which are boilerplate
+          -- drop the last line which is this package
+          --On each line only take upto the first space - to ignore the lastest
+          -- information given on some lines
+          processOutput = map dropLatest . drop 2 . init . T.lines
+          dropLatest = head . T.splitOn " "
 
 --Build the current list of packages return the success or failure of the build.
 build :: [String] -> IO Bool
