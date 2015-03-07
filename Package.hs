@@ -8,6 +8,8 @@ import qualified System
 import qualified Data.Map as Map
 import Data.List(intersperse)
 import Data.List.Split(splitOn)
+import Text.Format(format)
+import Control.Monad(forM)
 
 type PackageName = String
 type PackageDependencies = Maybe [PackageName] -- Wrapped in a maybe to indicate if dependencies could not be resolved.
@@ -43,10 +45,18 @@ newtype PackageDatabase = PackageDatabase (Map.Map PackageName PackageDependenci
 -- Get the list of packagenames from the system and then iterativly add then to the system
 -- Calling system to get the dependance for the package
 fromSystem :: IO PackageDatabase
-fromSystem = do packageNames <- packageListFromSystem
-                packages <- mapM packageFromSystem packageNames 
-                return $ foldl addPackage' emptyDatabase packages -- Swap arguments to add package to work with foldl
-  where addPackage' a b = addPackage b a -- Swap arguments
+fromSystem = do putStrLn "Loading package list..."
+                packageNames <- packageListFromSystem
+                let totalPackages = show $ length packageNames
+                --Get the packages using packageFromSystem we add an enumeration to
+                -- Allow us to trace the process as it is very slow.
+                packages <- forM (zip [1..] packageNames) $ \(i,name) ->
+                                             do putStrLn $ format "{0}/{1} - {2}" [show i, totalPackages, name]
+                                                packageFromSystem name
+                putStrLn "Compiling database..."
+                return $ foldl addPackage' emptyDatabase packages -- Swap arguments to addPackage to work with foldl                                                       
+  where addPackage' a b = addPackage b a
+
 
 --Sub contructors used internally in this module to construct the package database from the system
 
