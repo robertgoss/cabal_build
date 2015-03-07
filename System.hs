@@ -53,7 +53,7 @@ build = shelly . silently . errExit False . buildSh -- Use exitErr as we will be
 buildSh :: [String] -> Sh Bool
 buildSh names = do run_ "cabal" $ "install" : packages
                    success <- lastExitCode
-                   cleanCabalSystemSh
+                   cleanCabalSystemSh --Make sure cleaning is always run
                    return $ success == 0
     where packages = map T.pack names
 
