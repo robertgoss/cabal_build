@@ -10,6 +10,9 @@ import Data.List(intersperse)
 import Data.List.Split(splitOn)
 import Text.Format(format)
 import Control.Monad(forM)
+import Data.ByteString as BS(writeFile, readFile)
+
+import Data.Serialize(encode,decode)
 
 type PackageName = String
 type PackageDependencies = Maybe [PackageName] -- Wrapped in a maybe to indicate if dependencies could not be resolved.
@@ -38,6 +41,18 @@ splitPackageName packageName = (name , version)
 
 
 newtype PackageDatabase = PackageDatabase (Map.Map PackageName PackageDependencies)
+
+
+--Load / Save database to a file
+
+saveDatabase :: PackageDatabase -> IO ()
+saveDatabase (PackageDatabase database) = BS.writeFile "package.data" $ encode database
+
+--Note will error if cannot decode database - unsafe!!
+loadDatabase :: IO PackageDatabase
+loadDatabase = do bytestring <- BS.readFile "package.data"
+                  case (decode bytestring) of
+                      (Right database) -> return (PackageDatabase database)
 
 
 --Basic constructors of the full package database - either from a file or directly computed from system.
