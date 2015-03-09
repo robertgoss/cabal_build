@@ -5,6 +5,7 @@ import qualified System
 
 import qualified Data.Map as Map
 import Data.Hash
+import Data.Maybe(fromJust)
 
 type BuildId = Hash
 
@@ -85,7 +86,14 @@ getBuildDataFromId :: BuildDatabase -> BuildId -> BuildData
 getBuildDataFromId database buildId = (Map.!) ( idMap database ) buildId
 
 
---Helper function constructs a BuildData from a package  
+--Helper functions for constructing a BuildData  
+--Filter out only those elements of the context which are dependencies of this package
+getDependenciesFromContext :: PackageDatabase -> Context -> PackageName -> [PackageName]
+getDependenciesFromContext database context packageName = filter isDependant context
+          --A context package is dependent if it is a different version of a known dependency of this package
+    where isDependant cPackage = any (differentVersions cPackage) depends
+          --If we have a context then dependence resolution cant have failed.
+          depends = fromJust . dependencies $ getPackage database packageName
 
 
 --Properties of the BuildDatabase that can be extracted
