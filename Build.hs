@@ -5,6 +5,7 @@ import Package
 import Data.Map as Map
 
 data BuildData = BuildData { 
+                             package :: PackageName,
                              dependencies :: [BuildData]
 						   } deriving(Eq,Ord)
 
@@ -32,7 +33,8 @@ emptyBuildDatabase = BuildDatabase Map.empty Map.empty
 
 --Add the following build to the build database
 addBuild :: Build -> BuildDatabase -> BuildDatabase
-addBuild = undefined
+addBuild = (Build buildData buildResult) (BuildDatabase resultMap primaryMap) = BuildDatabase resultMap' primaryMap
+	where resultMap' = Map.insert buildData buildResult resultMap
 
 --Build the following package on the system
 build :: BuildDatabase -> BuildData -> IO BuildResult
