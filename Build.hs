@@ -5,14 +5,14 @@ import qualified System
 
 import qualified Data.Map as Map
 import Data.Hash
-import Data.Maybe(fromJust)
+import Data.Maybe(fromJust,isNothing)
 
 type BuildId = Hash
 
 data BuildData = BuildData { 
                              package :: PackageName,
-                             packageDependencies :: [PackageName],
-                             buildDependencies :: [BuildId]
+                             packageDependencies :: Maybe [PackageName], --Maybe in dependencies indicates a resolution failure
+                             buildDependencies :: Maybe [BuildId]
                            }
 
 --All the other packages which will be installed with a dependency.
@@ -50,6 +50,30 @@ fromPackageDatabase = undefined
 emptyBuildDatabase :: BuildDatabase
 emptyBuildDatabase = BuildDatabase Map.empty Map.empty Map.empty
 
+--Add the buildData of the following primary build and it's dependencies to the database
+--  We also add buildId of this build to the primaryMap
+addPrimaryBuildData :: PackageName -> PackageDatabase -> BuildDatabase -> BuildDatabase
+addPrimaryBuildData name packageDatabase buildDatabase = newBuildDatabase {primaryMap = primaryMap'}
+    where deps = dependencies $ getPackage packageDatabase name
+          (buildId, newBuildDatabase) = case deps of
+                                            -- The primary build is just a non-primary build data in 
+                                            -- the context given by it's dependencies
+                                             (Just context) -> addNonPrimaryBuildData context name packageDatabase buildDatabase
+                                            --There has been a resolution failure. Add in the stub build
+                                             Nothing -> let stubData = BuildData name Nothing Nothing
+                                                            stubId = getId stubData
+                                                            idMap' = Map.insert stubId stubData $ idMap buildDatabase
+                                                        in (stubId, buildDatabase {idMap = idMap'})
+          --Add buildId to primarymap so we can find this build
+          primaryMap' = Map.insert name buildId $ primaryMap newBuildDatabase
+
+
+
+--Add the buildData of the build of the given package in context and it's dependencies to the database
+-- We also return the buildId of this build
+addNonPrimaryBuildData :: Context -> PackageName -> PackageDatabase -> BuildDatabase -> (BuildId,BuildDatabase)
+addNonPrimaryBuildData = undefined
+
 --Add the following build result to the build database
 addBuildResult :: BuildData -> BuildResult -> BuildDatabase -> BuildDatabase
 addBuildResult  buildData buildResult database = database{ resultMap = resultMap' }
@@ -60,7 +84,12 @@ addBuildResult  buildData buildResult database = database{ resultMap = resultMap
 -- If the results are already in the build database it will return that.
 --First lookup to see if the resut is in the database if so return it.
 build :: BuildDatabase -> BuildData -> IO BuildResult
-build database buildData = case Map.lookup buildId (resultMap database) of
+build database buildData
+    -- First guard against resolution failures where the dependents are not known
+    -- Give this as reason for buildFailure
+    | isNothing (buildDependencies buildData) = return ResolutionFailure
+    --In this case can assume that buildDependencies are not nothing
+    | otherwise = case Map.lookup buildId (resultMap database) of
                                   (Just result) -> return result
                                   --If package is not in database find the build type for all dependencies
                                   Nothing -> do dependentResults <- mapM (build database) dependentBuilds
@@ -72,7 +101,8 @@ build database buildData = case Map.lookup buildId (resultMap database) of
                                                     return DependentFailure
         where buildId = getId buildData
               --Get the build data of the dependent builds
-              dependentBuilds = map (getBuildDataFromId database) $ buildDependencies buildData
+              -- We can use fromJust here as we guard against 
+              dependentBuilds = map (getBuildDataFromId database) . fromJust $ buildDependencies buildData
               --If a result is classed as successful and a translation of the system build into a result type
               success = (== BuildSuccess)
               resultType True = BuildSuccess
@@ -94,6 +124,7 @@ getDependenciesFromContext database context packageName = filter isDependant con
     where isDependant cPackage = any (differentVersions cPackage) depends
           --If we have a context then dependence resolution cant have failed.
           depends = fromJust . dependencies $ getPackage database packageName
+
 
 
 --Properties of the BuildDatabase that can be extracted
