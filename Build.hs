@@ -2,7 +2,7 @@ module Build() where
 
 import Package
 
-import Data.Map.Lazy as Map
+import Data.Map as Map
 
 data BuildData = BuildData { 
                              dependencies :: [BuildData]
@@ -25,6 +25,10 @@ fromPackageDatabase :: PackageDatabase -> IO BuildDatabase
 fromPackageDatabase = undefined
 
 --Sub contructors used internally in this module to construct the package database from the system
+
+--Create an empty build database
+emptyBuildDatabase :: BuildDatabase
+emptyBuildDatabase = BuildDatabase Map.empty Map.empty
 
 --Add the following build to the build database
 addBuild :: Build -> BuildDatabase -> BuildDatabase
