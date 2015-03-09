@@ -14,6 +14,9 @@ data BuildData = BuildData {
                              buildDependencies :: [BuildId]
                            }
 
+--All the other packages which will be installed with a dependency.
+type Context = [PackageName]
+
 --Build dependencies should not count towards hash as equality should be determined by packacge and package dependencies alone
 getId :: BuildData -> BuildId
 getId buildData = package' `combine` packageDependencies'
@@ -31,7 +34,7 @@ data Build = Build BuildData BuildResult
  --We use a lazy map here so we only need to run a build when we want to query a result
 data BuildDatabase = BuildDatabase {
                                      resultMap  :: (Map.Map BuildId BuildResult),-- Map of a build data to the result.
-                                     primaryMap :: (Map.Map PackageName BuildData),-- Map of package name to the primary build associated to it
+                                     primaryMap :: (Map.Map PackageName BuildId),-- Map of package name to the primary build associated to it
                                      idMap ::      (Map.Map BuildId BuildData)     -- Map of a buildId to it's associated build data
                                    }
 
