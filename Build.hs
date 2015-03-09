@@ -14,6 +14,7 @@ data BuildData = BuildData {
                              buildDependencies :: [BuildId]
                            }
 
+--Build dependencies should not count towards hash as equality should be determined by packacge and package dependencies alone
 getId :: BuildData -> BuildId
 getId buildData = package' `combine` packageDependencies'
     where package' = hash $ package buildData
