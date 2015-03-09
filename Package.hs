@@ -1,7 +1,8 @@
-module Package(PackageName, PackageDependencies, Package, PackageDatabase(),
-               packageName,
+module Package(PackageName, PackageDependencies, Package(..), PackageDatabase(),
+               packageName,differentVersions,
                fromSystem,
-               packageList, getPackage, getVersions
+               packageList, getPackage, getVersions,
+               saveDatabase, loadDatabase
               ) where
 
 import qualified System
@@ -39,6 +40,11 @@ splitPackageName packageName = (name , version)
           name = concat $ intersperse "-" nameParts
           version = map read $ splitOn "." verPart
 
+--Return if the 2 given packages are different versions of the same name.
+differentVersions :: PackageName -> PackageName -> Bool
+differentVersions  pName1 pName2 = name1 == name2
+  where (name1,_) = splitPackageName pName1
+        (name2,_) = splitPackageName pName2
 
 newtype PackageDatabase = PackageDatabase (Map.Map PackageName PackageDependencies)
 
