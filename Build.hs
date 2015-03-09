@@ -12,13 +12,12 @@ data BuildData = BuildData {
                              package :: PackageName,
                              packageDependencies :: [PackageName],
                              buildDependencies :: [BuildId]
-                           } deriving(Eq,Ord)
+                           }
 
 getId :: BuildData -> BuildId
-getId buildData = package' `combine` packageDependencies' `combine` buildDependencies'
+getId buildData = package' `combine` packageDependencies'
     where package' = hash $ package buildData
           packageDependencies' = hash $  packageDependencies buildData
-          buildDependencies' = hash . map asWord64 $  buildDependencies buildData
 
 data BuildResult = BuildSuccess       -- Build complete success.
                  | ResolutionFailure  -- Failed to resolve the dependencies of this package.
