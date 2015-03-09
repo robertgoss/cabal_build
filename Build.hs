@@ -71,8 +71,26 @@ addPrimaryBuildData name packageDatabase buildDatabase = newBuildDatabase {prima
 
 --Add the buildData of the build of the given package in context and it's dependencies to the database
 -- We also return the buildId of this build
+-- In this it is assumed that as it is being built in a package context that it has not failed to resolve.
+--We first get the build data for the dependencies
 addNonPrimaryBuildData :: Context -> PackageName -> PackageDatabase -> BuildDatabase -> (BuildId,BuildDatabase)
-addNonPrimaryBuildData = undefined
+addNonPrimaryBuildData context name packageDatabase buildDatabase = (buildId,finalDatabase)
+    where depends = getDependenciesFromContext packageDatabase context name
+          --Use a fold to keep updating the build database
+          --We return the database with all the dependednt id's added and a list of the dependent ids
+          (dependIds,buildDatabaseDeps) = foldl depIter ([],buildDatabase) depends
+          depIter (depIds,db) depName = (depId:depIds, dbDep)
+            where (depId,dbDep) = addNonPrimaryBuildData context depName packageDatabase buildDatabase
+          --Use the dependence data to construct the buildData for this package
+          buildData = BuildData {
+             package = name,
+             buildDependencies = Just dependIds,
+             packageDependencies = Just depends
+          }
+          buildId = getId buildData
+          --Add the buildData to the database
+          idMap' = Map.insert buildId buildData $ idMap buildDatabaseDeps
+          finalDatabase = buildDatabaseDeps { idMap = idMap' }
 
 --Add the following build result to the build database
 addBuildResult :: BuildData -> BuildResult -> BuildDatabase -> BuildDatabase
