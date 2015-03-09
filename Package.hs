@@ -21,13 +21,13 @@ type PackageDependencies = Maybe [PackageName] -- Wrapped in a maybe to indicate
 data Package = Package { name :: String,
                          version :: [Int],
                          dependencies :: PackageDependencies
-                       }
+                       } deriving(Show)
 
 --Properties of package
 --Get the full package nae of a package. This is in the form name-version. This will
 -- be used as an internal reference to the package in the package database below.
 packageName :: Package -> PackageName 
-packageName package = concat $ name package : "-" : map show (version package)
+packageName package = concat $ name package : "-" : (intersperse "." . map show . version $ package)
  
 
 --Split a package name into the name of the package and it's version number
