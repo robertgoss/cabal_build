@@ -6,6 +6,7 @@ import qualified System
 import qualified Data.Map as Map
 import Data.Hash
 import Data.Maybe(fromJust,isNothing)
+import Data.List(sort)
 
 type BuildId = Hash
 
@@ -22,7 +23,8 @@ type Context = [PackageName]
 getId :: BuildData -> BuildId
 getId buildData = package' `combine` packageDependencies'
     where package' = hash $ package buildData
-          packageDependencies' = hash $  packageDependencies buildData
+          --Sort this list as ordering should not matter for equality.
+          packageDependencies' = hash . fmap sort $  packageDependencies buildData
 
 data BuildResult = BuildSuccess       -- Build complete success.
                  | ResolutionFailure  -- Failed to resolve the dependencies of this package.
