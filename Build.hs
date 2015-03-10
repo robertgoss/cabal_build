@@ -7,6 +7,9 @@ import qualified Data.Map as Map
 import Data.Hash
 import Data.Maybe(fromJust,isNothing)
 import Data.List(sort,intersperse)
+import Data.ByteString as BS(writeFile, readFile)
+
+import Data.Serialize(encode,decode)
 
 type BuildId = Hash
 
@@ -45,6 +48,24 @@ data BuildDatabase = BuildDatabase {
                                      primaryMap :: (Map.Map PackageName BuildId),-- Map of package name to the primary build associated to it
                                      idMap ::      (Map.Map BuildId BuildData)     -- Map of a buildId to it's associated build data
                                    }
+
+--Basic IO to load and store the build databases as files. Uses cereal - not sure of 
+-- Stabiliy on data change, used to store results of long build proccess
+
+--Save the build database
+-- Encode the build database as a tuple of maps as cereal can serials tuples and maps
+saveBuildDatabase :: BuildDatabase -> IO ()
+saveBuildDatabase buildDatabase = BS.writeFile "build.data" $ encode buildTuple
+    where buildTuple = (resultMap buildDatabase, primaryMap buildDatabase, idMap buildDatabase)
+
+--Load database
+-- The database is encoded as a tuple of the maps in build see save.
+--This throws an error if it cannot decode the database.
+loadBuildDatabase :: IO BuildDatabase
+loadBuildDatabase = do bytestring <- BS.readFile "build.data"
+                      case (decode bytestring) of
+                         (Right buildTuple) -> return (fromBuildTuple buildTuple)
+  where fromBuildTuple (resultMap, idMap, primaryMap) = BuildDatabase resultMap idMap primaryMap 
 
 --Basic constructors of the full build database - either from a file or directly computed from system.
 --  These are the only constructors to be exported from this module so no partially constructed databases are made.
