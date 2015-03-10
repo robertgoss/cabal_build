@@ -6,7 +6,7 @@ import qualified System
 import qualified Data.Map as Map
 import Data.Hash
 import Data.Maybe(fromJust,isNothing)
-import Data.List(sort)
+import Data.List(sort,intersperse)
 
 type BuildId = Hash
 
@@ -15,6 +15,11 @@ data BuildData = BuildData {
                              packageDependencies :: Maybe [PackageName], --Maybe in dependencies indicates a resolution failure
                              buildDependencies :: Maybe [BuildId]
                            }
+
+instance Show BuildData where
+    show buildData | isNothing $ packageDependencies buildData = package buildData ++ " *resolution failed*"
+                   | otherwise = concat $ package buildData : " $ " : (intersperse " " . fromJust . packageDependencies $ buildData)
+
 
 --All the other packages which will be installed with a dependency.
 type Context = [PackageName]
@@ -81,8 +86,8 @@ addNonPrimaryBuildData context name packageDatabase buildDatabase = (buildId,fin
           --Use a fold to keep updating the build database
           --We return the database with all the dependednt id's added and a list of the dependent ids
           (dependIds,buildDatabaseDeps) = foldl depIter ([],buildDatabase) depends
-          depIter (depIds,db) depName = (depId:depIds, dbDep)
-            where (depId,dbDep) = addNonPrimaryBuildData context depName packageDatabase buildDatabase
+          depIter (depIds,depDb) depName = (depId:depIds, dbDep)
+            where (depId,dbDep) = addNonPrimaryBuildData context depName packageDatabase depDb
           --Use the dependence data to construct the buildData for this package
           buildData = BuildData {
              package = name,
