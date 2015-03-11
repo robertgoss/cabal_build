@@ -19,18 +19,18 @@ data BuildDatabaseMemory = BuildDatabaseMemory {
 
 --Make an instance of build database
 instance BuildDatabase BuildDatabaseMemory where
-  emptyBuildDatabase = BuildDatabaseMemory Map.empty Map.empty Map.empty
+  emptyBuildDatabase = return $ BuildDatabaseMemory Map.empty Map.empty Map.empty
 
-  addId buildId buildData database = database {idMap = idMap'}
+  addId buildId buildData database = return $ database {idMap = idMap'}
     where idMap' = Map.insert buildId buildData $ idMap database
-  addResult buildId buildResult database = database {resultMap = resultMap'}
+  addResult buildId buildResult database = return $ database {resultMap = resultMap'}
     where resultMap' = Map.insert buildId buildResult $ resultMap database
-  addPrimary packageName buildId database = database {primaryMap = primaryMap'}
+  addPrimary packageName buildId database = return $ database {primaryMap = primaryMap'}
     where primaryMap' = Map.insert packageName buildId $ primaryMap database
 
-  getData database buildId = fromJust . Map.lookup buildId $ idMap database
-  getResult database buildId = Map.findWithDefault NotBuilt buildId $ resultMap database
-  allIds database = Map.keys $ idMap database 
+  getData database buildId = return $ fromJust . Map.lookup buildId $ idMap database
+  getResult database buildId = return $ Map.findWithDefault NotBuilt buildId $ resultMap database
+  allIds database = return $ Map.keys $ idMap database 
 
 
 
