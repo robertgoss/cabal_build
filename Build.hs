@@ -1,8 +1,8 @@
 module Build(BuildDatabase(..),BuildData(..),BuildResult(..),BuildId,
-             emptyBuildDatabase,
              addAllPrimaryBuildData) where
 
 import Package
+import BuildResult
 import qualified System
 
 import Data.Hash
@@ -43,13 +43,6 @@ getIdFromPackages name deps = asWord64 $ package' `combine` packageDependencies'
     where package' = hash name
           --Sort this list as ordering should not matter for equality.
           packageDependencies' = hash . fmap sort $  deps
-
-data BuildResult = BuildSuccess       -- Build complete success.
-                 | ResolutionFailure  -- Failed to resolve the dependencies of this package.
-                 | DependentFailure   -- A package build that this package depends on failed to build.
-                 | BuildFail          -- Build failed in progress of building this package.
-                 | NotBuilt           -- The package has not yet been built
-                 deriving(Eq,Show,Ord,Enum)
 
 data Build = Build BuildData BuildResult
             
