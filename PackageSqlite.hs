@@ -8,7 +8,7 @@
 {-# LANGUAGE TemplateHaskell            #-}
 {-# LANGUAGE TypeFamilies               #-}
 
-module PackageSqlite(PackageDatabaseSqlite) where
+module PackageSqlite(loadDatabase, PackageDatabaseSqlite) where
 
 import Database.Persist
 import Database.Persist.TH
@@ -32,6 +32,10 @@ PackageSqlite
 --We do not expose this constructor so the only availible constructor creates an empty database
 data PackageDatabaseSqlite = PackageDatabaseSqlite
 
+--Mke sure migrations are run in load
+loadDatabase :: IO PackageDatabaseSqlite
+loadDatabase = runSqlite "package-sqlite.data" $ do runMigration migrateAll
+                                                    return PackageDatabaseSqlite
 
 --Convert PackageDatabaseSqlite to be a packagedatabase
 -- Here we use a constant path to the database for now.
