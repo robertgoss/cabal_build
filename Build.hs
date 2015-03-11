@@ -1,19 +1,14 @@
-module Build(emptyBuildDatabase, 
-             saveBuildDatabase, loadBuildDatabase,
+module Build(emptyBuildDatabase,
              addAllPrimaryBuildData) where
 
 import Package
 import qualified System
 
-import qualified Data.Map as Map
 import Data.Hash
 import Data.Maybe(fromJust,isNothing)
 import Control.Monad(foldM)
 import Text.Format(format)
 import Data.List(sort,intersperse)
-import Data.ByteString as BS(writeFile, readFile)
-
-import Data.Serialize(encode,decode)
 import Data.Word(Word64)
 
 import Debug.Trace(trace)
@@ -69,96 +64,43 @@ class BuildDatabase db where
   getResult :: db -> BuildId -> BuildResult
   allIds :: db -> [BuildId]
 
- --A completely in memory database using maps - can become impractical
-data BuildDatabaseMemory = BuildDatabaseMemory {
-                                       resultMap  :: (Map.Map BuildId BuildResult),-- Map of a build data to the result.
-                                       primaryMap :: (Map.Map PackageName BuildId),-- Map of package name to the primary build associated to it
-                                       idMap ::      (Map.Map BuildId BuildData)     -- Map of a buildId to it's associated build data
-                                     }
 
-
-instance BuildDatabase BuildDatabaseMemory where
-  emptyBuildDatabase = BuildDatabaseMemory Map.empty Map.empty Map.empty
-
-  addId buildId buildData database = database {idMap = idMap'}
-    where idMap' = Map.insert buildId buildData $ idMap database
-  addResult buildId buildResult database = database {resultMap = resultMap'}
-    where resultMap' = Map.insert buildId buildResult $ resultMap database
-  addPrimary packageName buildId database = database {primaryMap = primaryMap'}
-    where primaryMap' = Map.insert packageName buildId $ primaryMap database
-
-  getData database buildId = fromJust . Map.lookup buildId $ idMap database
-  getResult database buildId = Map.findWithDefault NotBuilt buildId $ resultMap database
-  allIds database = Map.keys $ idMap database 
-
-
-
---Basic IO to load and store the build databases as files. Uses cereal - not sure of 
--- Stabiliy on data change, used to store results of long build proccess
-
---Save the build database
--- Encode the build database as a tuple of maps as cereal can serials tuples and maps
--- Also we save the build results map with the results as integers as cereal can decode these and buildResults is an Enum
--- Also encode builddata as tuple.
--- Finally as Hash is not serializable save the associated word64
-saveBuildDatabase :: BuildDatabaseMemory -> IO ()
-saveBuildDatabase buildDatabase = BS.writeFile "build.data" $ encode buildTuple
-    where buildTuple = (resultMapInt, primaryMapWord, idMapTuple)
-          -- Map the various field of the maps to the serializable equivilents.
-          resultMapInt = Map.mapKeys asWord64 . Map.map fromEnum $ resultMap buildDatabase
-          toDataTuple (BuildData a b c) = (a,b,fmap (map asWord64) c)  -- Convert hash list
-          primaryMapWord = Map.map asWord64 $ primaryMap buildDatabase
-          idMapTuple = Map.mapKeys asWord64 . Map.map toDataTuple $ idMap buildDatabase
-
---Load database
--- The database is encoded as a tuple of the maps in build see save.
--- The resultMap has buildresuts encoded as ints
---This throws an error if it cannot decode the database.
-loadBuildDatabase :: IO BuildDatabaseMemory
-loadBuildDatabase = do bytestring <- BS.readFile "build.data"
-                       case (decode bytestring) of
-                         (Right buildTuple) -> return (fromBuildTuple buildTuple)
-  where fromBuildTuple :: (Map.Map Word64 Int, Map.Map String Word64, Map.Map Word64 (String,Maybe [String],Maybe [Word64])) -> BuildDatabaseMemory
-        fromBuildTuple (resultMapInt, primaryMapWord, idMapTuple) = BuildDatabaseMemory resultMap primaryMap idMap 
-           where resultMap = Map.mapKeys hashReverse . Map.map toEnum $ resultMapInt
-                 idMap = Map.mapKeys hashReverse . Map.map fromDataTuple $ idMapTuple
-                 primaryMap = Map.map hashReverse primaryMapWord
-                 -- This function reverses the asWord64 used in save by for a given word64 looking up the buildData and taking its hash
-                 hashReverse word = getId . fromDataTuple .fromJust $ Map.lookup word idMapTuple 
-                 fromDataTuple (a,b,c) = BuildData a b (fmap (map hashReverse) c) -- Convert tuple back to build data. Unconvert asWord
 
 --Basic constructors of the full build database - either from a file or directly computed from system.
 --  These are the only constructors to be exported from this module so no partially constructed databases are made.
 --  First we add all of the builddata for the primary packages then we fold across the build data adding 
 --  it for each sub package.
 fromPackageDatabase :: (PackageDatabase pkgDb,BuildDatabase buildDb) => pkgDb -> IO buildDb
-fromPackageDatabase packageDatabase = buildAll buildDatabaseWithPackageData
+fromPackageDatabase packageDatabase = buildDatabaseWithPackageData >>= buildAll
     where buildDatabaseWithPackageData = addAllPrimaryBuildData packageDatabase emptyBuildDatabase
 
 --Sub contructors used internally in this module to construct the package database from the system
 
 --Add the buildData for all the packages in the packageDatabase as primary builds to the 
 -- build database use a fold to update the database over the packagelist
-addAllPrimaryBuildData :: (PackageDatabase db, BuildDatabase buildDb) => db -> buildDb -> buildDb
-addAllPrimaryBuildData packageDatabase buildDatabase = foldl addPrimaryIter buildDatabase packages
-    where packages = map packageName $ packageList packageDatabase
-          addPrimaryIter currBuildDatabase currPackage = trace currPackage $ addPrimaryBuildData currPackage packageDatabase currBuildDatabase
+addAllPrimaryBuildData :: (PackageDatabase db, BuildDatabase buildDb) => db -> buildDb -> IO buildDb
+addAllPrimaryBuildData packageDatabase buildDatabase = do packages <- packageList packageDatabase
+                                                          let packageNames = map packageName packages
+                                                          foldM addPrimaryIter buildDatabase packageNames
+    where addPrimaryIter currBuildDatabase currPackage = trace currPackage $ addPrimaryBuildData currPackage packageDatabase currBuildDatabase
 
 
 --Add the buildData of the following primary build and it's dependencies to the database
 --  We also add buildId of this build to the primaryMap
 addPrimaryBuildData :: (PackageDatabase db,BuildDatabase buildDb) 
-                       => PackageName -> db -> buildDb -> buildDb
-addPrimaryBuildData name packageDatabase buildDatabase = addPrimary name buildId newBuildDatabase --Add buildId to primarymap so we can find this build
-    where deps = dependencies $ getPackage packageDatabase name
-          (buildId, newBuildDatabase) = case deps of
-                                            -- The primary build is just a non-primary build data in 
-                                            -- the context given by it's dependencies
-                                             (Just context) -> addNonPrimaryBuildData context name packageDatabase buildDatabase
-                                            --There has been a resolution failure. Add in the stub build
-                                             Nothing -> let stubData = BuildData name Nothing Nothing
-                                                            stubId = getId stubData
-                                                        in (stubId, addId stubId stubData buildDatabase)
+                       => PackageName -> db -> buildDb -> IO buildDb
+addPrimaryBuildData name packageDatabase buildDatabase = do package <- getPackage packageDatabase name
+                                                            (buildId, newBuildDatabase) <- addBasedOnDeps $ dependencies package
+                                                            return $ addPrimary name buildId newBuildDatabase
+
+    where addBasedOnDeps deps = case deps of --Add based on if there has been resolutin failure
+                                    -- The primary build is just a non-primary build data in 
+                                    -- the context given by it's dependencies
+                                    (Just context) -> addNonPrimaryBuildData context name packageDatabase buildDatabase
+                                    --There has been a resolution failure. Add in the stub build
+                                    Nothing -> let stubData = BuildData name Nothing Nothing
+                                                   stubId = getId stubData
+                                               in return (stubId, addId stubId stubData buildDatabase)
 
 
 
@@ -168,27 +110,30 @@ addPrimaryBuildData name packageDatabase buildDatabase = addPrimary name buildId
 -- In this it is assumed that as it is being built in a package context that it has not failed to resolve.
 --We first get the build data for the dependencies
 addNonPrimaryBuildData :: (PackageDatabase db,BuildDatabase buildDb)
-                           => Context -> PackageName -> db -> buildDb -> (BuildId,buildDb)
-addNonPrimaryBuildData context name packageDatabase buildDatabase 
-         --To avoid readding data to the database we see if the id associated to this build is in the dataase already
-         | (getResult buildDatabase buildId) /= NotBuilt = (buildId, buildDatabase)
-         | otherwise = (buildId,finalDatabase)
-    where depends = getDependenciesFromContext packageDatabase context name
-          --Can get id without having to check all sub-packages which is faster
-          buildId = getIdFromPackages name depends
-          --Use a fold to keep updating the build database
-          --We return the database with all the dependednt id's added and a list of the dependent ids
-          (dependIds,buildDatabaseDeps) = foldl depIter ([],buildDatabase) depends
-          depIter (depIds,depDb) depName = (depId:depIds, dbDep)
-            where (depId,dbDep) = addNonPrimaryBuildData context depName packageDatabase depDb
-          --Use the dependence data to construct the buildData for this package
-          buildData = BuildData {
-             package = name,
-             buildDependencies = Just dependIds,
-             packageDependencies = Just depends
-          }
-          --Add the buildData to the database
-          finalDatabase = addId buildId buildData buildDatabaseDeps
+                           => Context -> PackageName -> db -> buildDb -> IO (BuildId,buildDb)
+addNonPrimaryBuildData context name packageDatabase buildDatabase
+         = do depends <- getDependenciesFromContext packageDatabase context name
+              let --Can get id without having to check all sub-packages which is faster
+                buildId = getIdFromPackages name depends
+              --To avoid readding data to the database we see if the id associated to this build is in the dataase already
+              if (getResult buildDatabase buildId) /= NotBuilt then 
+                return (buildId, buildDatabase)
+              else
+                addNonPrimaryBuildData' depends buildId
+          
+  where addNonPrimaryBuildData' depends buildId = do --Use a fold to keep updating the build database
+                                                     (dependIds,buildDatabaseDeps) <- foldM depIter ([],buildDatabase) depends
+                                                     let --Use the dependence data to construct the buildData for this package
+                                                         buildData = BuildData { package = name,
+                                                                                 buildDependencies = Just dependIds,
+                                                                                 packageDependencies = Just depends
+                                                                               }
+                                                     return (buildId, addId buildId buildData buildDatabaseDeps)
+
+          where depIter (depIds,depDb) depName = do (depId,dbDep) <- addNonPrimaryBuildData context depName packageDatabase depDb
+                                                    return(depId:depIds, dbDep)
+
+
 
 
 --Takes gets the given buildId and build database and updates the database 
@@ -243,12 +188,14 @@ buildAll buildDatabase = foldM build' buildDatabase $ zip indices buildIds
 
 --Helper functions for constructing a BuildData  
 --Filter out only those elements of the context which are dependencies of this package
-getDependenciesFromContext :: (PackageDatabase db) => db -> Context -> PackageName -> [PackageName]
-getDependenciesFromContext database context packageName = filter isDependant context
+getDependenciesFromContext :: (PackageDatabase db) => db -> Context -> PackageName -> IO [PackageName]
+getDependenciesFromContext database context packageName = do package <- getPackage database packageName
+                                                             --If we have a context then dependence resolution cant have failed.
+                                                             let depends = fromJust . dependencies $ package
+                                                             return $ filter (isDependant depends) context
           --A context package is dependent if it is a different version of a known dependency of this package
-    where isDependant cPackage = any (differentVersions cPackage) depends
-          --If we have a context then dependence resolution cant have failed.
-          depends = fromJust . dependencies $ getPackage database packageName
+    where isDependant depends cPackage = any (differentVersions cPackage) depends
+
 
 
 
