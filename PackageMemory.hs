@@ -10,10 +10,10 @@ import Package
 newtype PackageDatabaseMemory = PackageDatabaseMemory (Map.Map PackageName PackageDependencies)
 
 instance PackageDatabase PackageDatabaseMemory where
-  emptyDatabase = PackageDatabaseMemory Map.empty
-  keys (PackageDatabaseMemory depMap) = Map.keys depMap
-  insert name dep (PackageDatabaseMemory depMap) = PackageDatabaseMemory $ Map.insert name dep depMap
-  getDependency (PackageDatabaseMemory depMap) name = Map.lookup name depMap
+  emptyDatabase = return $ PackageDatabaseMemory Map.empty
+  keys (PackageDatabaseMemory depMap) = return $ Map.keys depMap
+  insert name dep (PackageDatabaseMemory depMap) = return $ PackageDatabaseMemory $ Map.insert name dep depMap
+  getDependency (PackageDatabaseMemory depMap) name = return $ Map.lookup name depMap
 
 
 --Load / Save database to a file

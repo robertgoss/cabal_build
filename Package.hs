@@ -8,7 +8,7 @@ import qualified System
 import Data.List(intersperse)
 import Data.List.Split(splitOn)
 import Text.Format(format)
-import Control.Monad(forM)
+import Control.Monad(forM, foldM)
 import Data.Maybe(fromJust)
 
 type PackageName = String
@@ -44,10 +44,10 @@ differentVersions  pName1 pName2 = name1 == name2
 
 --An abstrction of the features of a package database used in memeory
 class PackageDatabase a where
-  emptyDatabase :: a
-  keys :: a -> [PackageName]
-  insert :: PackageName -> PackageDependencies -> a -> a
-  getDependency :: a -> PackageName -> Maybe PackageDependencies
+  emptyDatabase :: IO a
+  keys :: a -> IO [PackageName]
+  insert :: PackageName -> PackageDependencies -> a -> IO a
+  getDependency :: a -> PackageName -> IO (Maybe PackageDependencies)
 
 
 --Basic constructors of the full package database - either from a file or directly computed from system.
@@ -65,7 +65,8 @@ fromSystem = do System.cleanCabalSystem -- Clean system so there are no local pa
                                              do putStrLn $ format "{0}/{1} - {2}" [show index, totalPackages, name]
                                                 packageFromSystem name
                 putStrLn "Compiling database..."
-                return $ foldl addPackage' emptyDatabase packages -- Swap arguments to addPackage to work with foldl                                                       
+                empty <- emptyDatabase
+                foldM addPackage' empty packages -- Swap arguments to addPackage to work with foldl                                                       
   where addPackage' a b = addPackage b a
         indices = [1..] :: [Int]
 
@@ -73,7 +74,7 @@ fromSystem = do System.cleanCabalSystem -- Clean system so there are no local pa
 --Sub contructors used internally in this module to construct the package database from the system
 
 --  Add package to the database
-addPackage :: (PackageDatabase db) => Package -> db -> db
+addPackage :: (PackageDatabase db) => Package -> db -> IO db
 addPackage package database = insert name pDependencies database
     where name = packageName package
           pDependencies = dependencies package
@@ -100,16 +101,16 @@ packageListFromSystem = System.packageList
 
 --The list of available packages
 --Uses the keys of the dependence map to get list of packageNames
-packageList :: (PackageDatabase db) => db -> [Package]
-packageList database = map (getPackage database) names
-    where names = keys database
+packageList :: (PackageDatabase db) => db -> IO [Package]
+packageList database = do names <- keys database
+                          mapM (getPackage database) names
 
 --Get package from the database from it's package name
 -- Is assumed to be in database
-getPackage :: (PackageDatabase db) => db -> PackageName -> Package
-getPackage database name = Package { name = packageName,
-                                     version = packageVersion,
-                                     dependencies = packageDependencies
-                                   }
-    where packageDependencies = fromJust $ getDependency database name
-          (packageName, packageVersion) = splitPackageName name
+getPackage :: (PackageDatabase db) => db -> PackageName -> IO Package
+getPackage database name = do packageDependencies <- fmap fromJust $ getDependency database name
+                              let (packageName, packageVersion) = splitPackageName name
+                              return $ Package { name = packageName,
+                                                 version = packageVersion,
+                                                 dependencies = packageDependencies
+                                               }
