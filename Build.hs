@@ -1,4 +1,5 @@
-module Build(emptyBuildDatabase,
+module Build(BuildDatabase(..),BuildData(..),BuildResult(..),BuildId,
+             emptyBuildDatabase,
              addAllPrimaryBuildData) where
 
 import Package
@@ -13,7 +14,7 @@ import Data.Word(Word64)
 
 import Debug.Trace(trace)
 
-type BuildId = Hash
+type BuildId = Word64
 
 
 data BuildData = BuildData { 
@@ -32,13 +33,13 @@ type Context = [PackageName]
 
 --Build dependencies should not count towards hash as equality should be determined by packacge and package dependencies alone
 getId :: BuildData -> BuildId
-getId buildData = package' `combine` packageDependencies'
+getId buildData = asWord64 $ package' `combine` packageDependencies'
     where package' = hash $ package buildData
           --Sort this list as ordering should not matter for equality.
           packageDependencies' = hash . fmap sort $  packageDependencies buildData
 
 getIdFromPackages :: PackageName -> [PackageName] -> BuildId
-getIdFromPackages name deps = package' `combine` packageDependencies'
+getIdFromPackages name deps = asWord64 $ package' `combine` packageDependencies'
     where package' = hash name
           --Sort this list as ordering should not matter for equality.
           packageDependencies' = hash . fmap sort $  deps

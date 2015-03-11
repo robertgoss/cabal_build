@@ -4,6 +4,7 @@ module BuildMemory(BuildDatabaseMemory,
 import qualified Data.Map as Map
 import Data.ByteString as BS(writeFile, readFile)
 import Data.Serialize(encode,decode)
+import Data.Maybe(fromJust)
 
 import Package
 import Build
@@ -42,15 +43,14 @@ instance BuildDatabase BuildDatabaseMemory where
 -- Encode the build database as a tuple of maps as cereal can serials tuples and maps
 -- Also we save the build results map with the results as integers as cereal can decode these and buildResults is an Enum
 -- Also encode builddata as tuple.
--- Finally as Hash is not serializable save the associated word64
 saveBuildDatabase :: BuildDatabaseMemory -> IO ()
 saveBuildDatabase buildDatabase = BS.writeFile "build.data" $ encode buildTuple
     where buildTuple = (resultMapInt, primaryMapWord, idMapTuple)
           -- Map the various field of the maps to the serializable equivilents.
-          resultMapInt = Map.mapKeys asWord64 . Map.map fromEnum $ resultMap buildDatabase
-          toDataTuple (BuildData a b c) = (a,b,fmap (map asWord64) c)  -- Convert hash list
-          primaryMapWord = Map.map asWord64 $ primaryMap buildDatabase
-          idMapTuple = Map.mapKeys asWord64 . Map.map toDataTuple $ idMap buildDatabase
+          resultMapInt = Map.map fromEnum $ resultMap buildDatabase
+          toDataTuple (BuildData a b c) = (a,b,c)  -- Convert hash list
+          primaryMapWord = primaryMap buildDatabase
+          idMapTuple = Map.map toDataTuple $ idMap buildDatabase
 
 --Load database
 -- The database is encoded as a tuple of the maps in build see save.
@@ -60,11 +60,8 @@ loadBuildDatabase :: IO BuildDatabaseMemory
 loadBuildDatabase = do bytestring <- BS.readFile "build.data"
                        case (decode bytestring) of
                          (Right buildTuple) -> return (fromBuildTuple buildTuple)
-  where fromBuildTuple :: (Map.Map Word64 Int, Map.Map String Word64, Map.Map Word64 (String,Maybe [String],Maybe [Word64])) -> BuildDatabaseMemory
-        fromBuildTuple (resultMapInt, primaryMapWord, idMapTuple) = BuildDatabaseMemory resultMap primaryMap idMap 
-           where resultMap = Map.mapKeys hashReverse . Map.map toEnum $ resultMapInt
-                 idMap = Map.mapKeys hashReverse . Map.map fromDataTuple $ idMapTuple
-                 primaryMap = Map.map hashReverse primaryMapWord
-                 -- This function reverses the asWord64 used in save by for a given word64 looking up the buildData and taking its hash
-                 hashReverse word = getId . fromDataTuple .fromJust $ Map.lookup word idMapTuple 
-                 fromDataTuple (a,b,c) = BuildData a b (fmap (map hashReverse) c) -- Convert tuple back to build data. Unconvert asWord
+  where fromBuildTuple (resultMapInt, primaryMapWord, idMapTuple) = BuildDatabaseMemory resultMap primaryMap idMap 
+           where resultMap = Map.map toEnum $ resultMapInt
+                 idMap = Map.map fromDataTuple $ idMapTuple
+                 primaryMap = primaryMapWord
+                 fromDataTuple (a,b,c) = BuildData a b c -- Convert tuple back to build data.
