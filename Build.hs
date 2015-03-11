@@ -69,6 +69,8 @@ loadBuildDatabase = do bytestring <- BS.readFile "build.data"
 
 --Basic constructors of the full build database - either from a file or directly computed from system.
 --  These are the only constructors to be exported from this module so no partially constructed databases are made.
+--  First we add all of the builddata for the primary packages then we fold across the build data adding 
+--  it for each sub package.
 fromPackageDatabase :: PackageDatabase -> IO BuildDatabase
 fromPackageDatabase = undefined
 
@@ -77,6 +79,15 @@ fromPackageDatabase = undefined
 --Create an empty build database
 emptyBuildDatabase :: BuildDatabase
 emptyBuildDatabase = BuildDatabase Map.empty Map.empty Map.empty
+
+
+--Add the buildData for all the packages in the packageDatabase as primary builds to the 
+-- build database use a fold to update the database over the packagelist
+addAllPrimaryBuildData :: PackageDatabase -> BuildDatabase -> BuildDatabase
+addAllPrimaryBuildData packageDatabase buildDatabase = foldl addPrimaryIter buildDatabase packages
+    where packages = packageList packageDatabase
+          addPrimaryIter currBuildDatabase currPackage = addPrimaryBuildData currPackage packageDatabase currBuildDatabase
+
 
 --Add the buildData of the following primary build and it's dependencies to the database
 --  We also add buildId of this build to the primaryMap
@@ -155,6 +166,7 @@ build database buildData
               resultType False = BuildFail
               --The package names of all the packages to use in this build
               buildPackageList = package buildData : map package dependentBuilds
+
 
 
 --Return the build id associated to the given buildId
