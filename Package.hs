@@ -1,20 +1,15 @@
-module Package(PackageName, PackageDependencies, Package(..), PackageDatabase,
+module Package(PackageName, PackageDependencies, Package(..), PackageDatabase(..),
                packageName,differentVersions,
                fromSystem,
                packageList, getPackage,
-               saveDatabase, loadDatabase
               ) where
 
 import qualified System
-import qualified Data.Map as Map
 import Data.List(intersperse)
 import Data.List.Split(splitOn)
 import Text.Format(format)
 import Control.Monad(forM)
-import Data.ByteString as BS(writeFile, readFile)
 import Data.Maybe(fromJust)
-
-import Data.Serialize(encode,decode)
 
 type PackageName = String
 type PackageDependencies = Maybe [PackageName] -- Wrapped in a maybe to indicate if dependencies could not be resolved.
@@ -53,27 +48,6 @@ class PackageDatabase a where
   keys :: a -> [PackageName]
   insert :: PackageName -> PackageDependencies -> a -> a
   getDependency :: a -> PackageName -> Maybe PackageDependencies
-
---A package database held completely in memory
-newtype PackageDatabaseMemory = PackageDatabaseMemory (Map.Map PackageName PackageDependencies)
-
-instance PackageDatabase PackageDatabaseMemory where
-  emptyDatabase = PackageDatabaseMemory Map.empty
-  keys (PackageDatabaseMemory depMap) = Map.keys depMap
-  insert name dep (PackageDatabaseMemory depMap) = PackageDatabaseMemory $ Map.insert name dep depMap
-  getDependency (PackageDatabaseMemory depMap) name = Map.lookup name depMap
-
-
---Load / Save database to a file
-
-saveDatabase :: PackageDatabaseMemory -> IO ()
-saveDatabase (PackageDatabaseMemory database) = BS.writeFile "package.data" $ encode database
-
---Note will error if cannot decode database - unsafe!!
-loadDatabase :: IO PackageDatabaseMemory
-loadDatabase = do bytestring <- BS.readFile "package.data"
-                  case (decode bytestring) of
-                      (Right database) -> return (PackageDatabaseMemory database)
 
 
 --Basic constructors of the full package database - either from a file or directly computed from system.
