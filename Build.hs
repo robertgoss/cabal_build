@@ -6,12 +6,15 @@ import qualified System
 import qualified Data.Map as Map
 import Data.Hash
 import Data.Maybe(fromJust,isNothing)
+import Control.Monad(foldM)
 import Data.List(sort,intersperse)
 import Data.ByteString as BS(writeFile, readFile)
 
 import Data.Serialize(encode,decode)
+import Data.Word(Word64)
 
 type BuildId = Hash
+
 
 data BuildData = BuildData { 
                              package :: PackageName,
@@ -38,7 +41,8 @@ data BuildResult = BuildSuccess       -- Build complete success.
                  | ResolutionFailure  -- Failed to resolve the dependencies of this package.
                  | DependentFailure   -- A package build that this package depends on failed to build.
                  | BuildFail          -- Build failed in progress of building this package.
-                 deriving(Eq,Show,Ord)
+                 | NotBuilt           -- The package has not yet been built
+                 deriving(Eq,Show,Ord,Enum)
 
 data Build = Build BuildData BuildResult
             
@@ -54,18 +58,34 @@ data BuildDatabase = BuildDatabase {
 
 --Save the build database
 -- Encode the build database as a tuple of maps as cereal can serials tuples and maps
+-- Also we save the build results map with the results as integers as cereal can decode these and buildResults is an Enum
+-- Also encode builddata as tuple.
+-- Finally as Hash is not serializable save the associated word64
 saveBuildDatabase :: BuildDatabase -> IO ()
 saveBuildDatabase buildDatabase = BS.writeFile "build.data" $ encode buildTuple
-    where buildTuple = (resultMap buildDatabase, primaryMap buildDatabase, idMap buildDatabase)
+    where buildTuple = (resultMapInt, primaryMapWord, idMapTuple)
+          -- Map the various field of the maps to the serializable equivilents.
+          resultMapInt = Map.mapKeys asWord64 . Map.map fromEnum $ resultMap buildDatabase
+          toDataTuple (BuildData a b c) = (a,b,fmap (map asWord64) c)  -- Convert hash list
+          primaryMapWord = Map.map asWord64 $ primaryMap buildDatabase
+          idMapTuple = Map.mapKeys asWord64 . Map.map toDataTuple $ idMap buildDatabase
 
 --Load database
 -- The database is encoded as a tuple of the maps in build see save.
+-- The resultMap has buildresuts encoded as ints
 --This throws an error if it cannot decode the database.
 loadBuildDatabase :: IO BuildDatabase
 loadBuildDatabase = do bytestring <- BS.readFile "build.data"
-                      case (decode bytestring) of
+                       case (decode bytestring) of
                          (Right buildTuple) -> return (fromBuildTuple buildTuple)
-  where fromBuildTuple (resultMap, idMap, primaryMap) = BuildDatabase resultMap idMap primaryMap 
+  where fromBuildTuple :: (Map.Map Word64 Int, Map.Map String Word64, Map.Map Word64 (String,Maybe [String],Maybe [Word64])) -> BuildDatabase
+        fromBuildTuple (resultMapInt, primaryMapWord, idMapTuple) = BuildDatabase resultMap primaryMap idMap 
+           where resultMap = Map.mapKeys hashReverse . Map.map toEnum $ resultMapInt
+                 idMap = Map.mapKeys hashReverse . Map.map fromDataTuple $ idMapTuple
+                 primaryMap = Map.map hashReverse primaryMapWord
+                 -- This function reverses the asWord64 used in save by for a given word64 looking up the buildData and taking its hash
+                 hashReverse word = getId . fromDataTuple .fromJust $ Map.lookup word idMapTuple 
+                 fromDataTuple (a,b,c) = BuildData a b (fmap (map hashReverse) c) -- Convert tuple back to build data. Unconvert asWord
 
 --Basic constructors of the full build database - either from a file or directly computed from system.
 --  These are the only constructors to be exported from this module so no partially constructed databases are made.
@@ -85,7 +105,7 @@ emptyBuildDatabase = BuildDatabase Map.empty Map.empty Map.empty
 -- build database use a fold to update the database over the packagelist
 addAllPrimaryBuildData :: PackageDatabase -> BuildDatabase -> BuildDatabase
 addAllPrimaryBuildData packageDatabase buildDatabase = foldl addPrimaryIter buildDatabase packages
-    where packages = packageList packageDatabase
+    where packages = map name $ packageList packageDatabase
           addPrimaryIter currBuildDatabase currPackage = addPrimaryBuildData currPackage packageDatabase currBuildDatabase
 
 
@@ -131,47 +151,51 @@ addNonPrimaryBuildData context name packageDatabase buildDatabase = (buildId,fin
           idMap' = Map.insert buildId buildData $ idMap buildDatabaseDeps
           finalDatabase = buildDatabaseDeps { idMap = idMap' }
 
---Add the following build result to the build database
-addBuildResult :: BuildData -> BuildResult -> BuildDatabase -> BuildDatabase
-addBuildResult  buildData buildResult database = database{ resultMap = resultMap' }
-    where resultMap' = Map.insert (getId buildData) buildResult $ resultMap database
+
+--Takes gets the given buildId and build database and updates the database 
+-- With the build results of this build. If the build result is already know 
+-- for this buildId then no changes are made.
+-- If any dependent builds are need they are also built and there results
+-- Are added to the database as well.
+build :: BuildId -> BuildDatabase -> IO BuildDatabase
+--We first guard against the possibility that a result is already attached to this
+-- buildId in which case the database is unchanged
+build buildId buildDatabase | Map.member buildId (resultMap buildDatabase) = return buildDatabase
+                         --Next we guard against the possibility that the given build had a resolution failure
+                            | isNothing (packageDependencies buildData) 
+                                                   = return $ addBuildResult buildDatabase buildId ResolutionFailure 
+                         --Otherwise we build all of the dependencies and get the database with there results.
+                         -- We lookup the reuslts in this to see if there are any dependence failures
+                         -- If there is then we add as a dependence failure else we build the package on the system
+                            | otherwise = do dependentBuildDatabase <- buildList dependenceIds buildDatabase
+                                             let depResults = map (getBuildResultFromId dependentBuildDatabase) dependenceIds
+                                             if all (==BuildSuccess) depResults then 
+                                                 return $ addBuildResult buildDatabase buildId DependentFailure
+                                             else 
+                                                 --Build package on system 
+                                                 do buildStatus <- System.build fullPackageList
+                                                    if buildStatus then return $ addBuildResult buildDatabase buildId BuildSuccess
+                                                                   else return $ addBuildResult buildDatabase buildId BuildFail
+
+    where --The buildData of this id. It is assumes in database
+          buildData = fromJust . Map.lookup buildId $ idMap buildDatabase
+          --The Ids of the depenendences use from just as have guarded aganinst resolution failure
+          dependenceIds = fromJust $ buildDependencies buildData
+          -- The full package list to build
+          fullPackageList = package buildData : fromJust (packageDependencies buildData)
 
 
---Build the following package on the system and resutrn the build result
--- If the results are already in the build database it will return that.
---First lookup to see if the resut is in the database if so return it.
-build :: BuildDatabase -> BuildData -> IO BuildResult
-build database buildData
-    -- First guard against resolution failures where the dependents are not known
-    -- Give this as reason for buildFailure
-    | isNothing (buildDependencies buildData) = return ResolutionFailure
-    --In this case can assume that buildDependencies are not nothing
-    | otherwise = case Map.lookup buildId (resultMap database) of
-                                  (Just result) -> return result
-                                  --If package is not in database find the build type for all dependencies
-                                  Nothing -> do dependentResults <- mapM (build database) dependentBuilds
-                                                if all success dependentResults then
-                                                    --If all dependencies succeed then build package on the system.
-                                                    fmap resultType $ System.build buildPackageList
-                                                else
-                                                    --If any fail then return a dependence failure
-                                                    return DependentFailure
-        where buildId = getId buildData
-              --Get the build data of the dependent builds
-              -- We can use fromJust here as we guard against 
-              dependentBuilds = map (getBuildDataFromId database) . fromJust $ buildDependencies buildData
-              --If a result is classed as successful and a translation of the system build into a result type
-              success = (== BuildSuccess)
-              resultType True = BuildSuccess
-              resultType False = BuildFail
-              --The package names of all the packages to use in this build
-              buildPackageList = package buildData : map package dependentBuilds
+--Helper function build a list of build Ids as in build. But chain together the databases so the final
+-- Database has the results of building all the packages. Use monadinc fold
+buildList :: [BuildId] -> BuildDatabase -> IO BuildDatabase
+buildList buildIds buildDatabase = foldM build' buildDatabase buildIds
+  where build' a b = build b a -- Build needs an argument swap to work with foldM
 
+--Helper function add a build result to the database
+addBuildResult :: BuildDatabase ->  BuildId -> BuildResult -> BuildDatabase
+addBuildResult buildDatabase buildId buildResult = buildDatabase {resultMap = resultMap'}
+  where resultMap' = Map.insert buildId buildResult $ resultMap buildDatabase
 
-
---Return the build id associated to the given buildId
-getBuildDataFromId :: BuildDatabase -> BuildId -> BuildData
-getBuildDataFromId database buildId = (Map.!) ( idMap database ) buildId
 
 
 --Helper functions for constructing a BuildData  
@@ -200,3 +224,8 @@ getPrimaryBuilds = undefined
 -- database with the given name.
 getPrimaryBuild :: BuildDatabase -> PackageName -> Build
 getPrimaryBuild = undefined
+
+--Return the result associated to the given buildId
+-- Use a default of not build if not in the resultMap.
+getBuildResultFromId :: BuildDatabase -> BuildId -> BuildResult
+getBuildResultFromId database buildId = Map.findWithDefault NotBuilt buildId $ resultMap database  
