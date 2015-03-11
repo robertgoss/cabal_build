@@ -1,4 +1,6 @@
-module Build() where
+module Build(emptyBuildDatabase, 
+             saveBuildDatabase, loadBuildDatabase,
+             addAllPrimaryBuildData) where
 
 import Package
 import qualified System
@@ -7,11 +9,14 @@ import qualified Data.Map as Map
 import Data.Hash
 import Data.Maybe(fromJust,isNothing)
 import Control.Monad(foldM)
+import Text.Format(format)
 import Data.List(sort,intersperse)
 import Data.ByteString as BS(writeFile, readFile)
 
 import Data.Serialize(encode,decode)
 import Data.Word(Word64)
+
+import Debug.Trace(trace)
 
 type BuildId = Hash
 
@@ -36,6 +41,12 @@ getId buildData = package' `combine` packageDependencies'
     where package' = hash $ package buildData
           --Sort this list as ordering should not matter for equality.
           packageDependencies' = hash . fmap sort $  packageDependencies buildData
+
+getIdFromPackages :: PackageName -> [PackageName] -> BuildId
+getIdFromPackages name deps = package' `combine` packageDependencies'
+    where package' = hash name
+          --Sort this list as ordering should not matter for equality.
+          packageDependencies' = hash . fmap sort $  deps
 
 data BuildResult = BuildSuccess       -- Build complete success.
                  | ResolutionFailure  -- Failed to resolve the dependencies of this package.
@@ -91,8 +102,9 @@ loadBuildDatabase = do bytestring <- BS.readFile "build.data"
 --  These are the only constructors to be exported from this module so no partially constructed databases are made.
 --  First we add all of the builddata for the primary packages then we fold across the build data adding 
 --  it for each sub package.
-fromPackageDatabase :: PackageDatabase -> IO BuildDatabase
-fromPackageDatabase = undefined
+fromPackageDatabase :: (PackageDatabase db) => db -> IO BuildDatabase
+fromPackageDatabase packageDatabase = buildAll buildDatabaseWithPackageData
+    where buildDatabaseWithPackageData = addAllPrimaryBuildData packageDatabase emptyBuildDatabase
 
 --Sub contructors used internally in this module to construct the package database from the system
 
@@ -103,15 +115,15 @@ emptyBuildDatabase = BuildDatabase Map.empty Map.empty Map.empty
 
 --Add the buildData for all the packages in the packageDatabase as primary builds to the 
 -- build database use a fold to update the database over the packagelist
-addAllPrimaryBuildData :: PackageDatabase -> BuildDatabase -> BuildDatabase
+addAllPrimaryBuildData :: (PackageDatabase db) => db -> BuildDatabase -> BuildDatabase
 addAllPrimaryBuildData packageDatabase buildDatabase = foldl addPrimaryIter buildDatabase packages
-    where packages = map name $ packageList packageDatabase
-          addPrimaryIter currBuildDatabase currPackage = addPrimaryBuildData currPackage packageDatabase currBuildDatabase
+    where packages = map packageName $ packageList packageDatabase
+          addPrimaryIter currBuildDatabase currPackage = trace currPackage $ addPrimaryBuildData currPackage packageDatabase currBuildDatabase
 
 
 --Add the buildData of the following primary build and it's dependencies to the database
 --  We also add buildId of this build to the primaryMap
-addPrimaryBuildData :: PackageName -> PackageDatabase -> BuildDatabase -> BuildDatabase
+addPrimaryBuildData :: (PackageDatabase db) => PackageName -> db -> BuildDatabase -> BuildDatabase
 addPrimaryBuildData name packageDatabase buildDatabase = newBuildDatabase {primaryMap = primaryMap'}
     where deps = dependencies $ getPackage packageDatabase name
           (buildId, newBuildDatabase) = case deps of
@@ -132,9 +144,14 @@ addPrimaryBuildData name packageDatabase buildDatabase = newBuildDatabase {prima
 -- We also return the buildId of this build
 -- In this it is assumed that as it is being built in a package context that it has not failed to resolve.
 --We first get the build data for the dependencies
-addNonPrimaryBuildData :: Context -> PackageName -> PackageDatabase -> BuildDatabase -> (BuildId,BuildDatabase)
-addNonPrimaryBuildData context name packageDatabase buildDatabase = (buildId,finalDatabase)
+addNonPrimaryBuildData :: (PackageDatabase db) => Context -> PackageName -> db -> BuildDatabase -> (BuildId,BuildDatabase)
+addNonPrimaryBuildData context name packageDatabase buildDatabase 
+         --To avoid readding data to the database we see if the id associated to this build is in the dataase already
+         | Map.member buildId $ idMap buildDatabase = (buildId, buildDatabase)
+         | otherwise = (buildId,finalDatabase)
     where depends = getDependenciesFromContext packageDatabase context name
+          --Can get id without having to check all sub-packages which is faster
+          buildId = getIdFromPackages name depends
           --Use a fold to keep updating the build database
           --We return the database with all the dependednt id's added and a list of the dependent ids
           (dependIds,buildDatabaseDeps) = foldl depIter ([],buildDatabase) depends
@@ -146,7 +163,6 @@ addNonPrimaryBuildData context name packageDatabase buildDatabase = (buildId,fin
              buildDependencies = Just dependIds,
              packageDependencies = Just depends
           }
-          buildId = getId buildData
           --Add the buildData to the database
           idMap' = Map.insert buildId buildData $ idMap buildDatabaseDeps
           finalDatabase = buildDatabaseDeps { idMap = idMap' }
@@ -191,6 +207,15 @@ buildList :: [BuildId] -> BuildDatabase -> IO BuildDatabase
 buildList buildIds buildDatabase = foldM build' buildDatabase buildIds
   where build' a b = build b a -- Build needs an argument swap to work with foldM
 
+--Build all builds in the build database 
+buildAll :: BuildDatabase -> IO BuildDatabase
+buildAll buildDatabase = foldM build' buildDatabase $ zip [1..] buildIds
+  where build' db (index, buildId) = let packageName = package . fromJust . Map.lookup buildId $ idMap buildDatabase
+                                     in do putStrLn $ format "{0}/{1} - {2}" [show index, totalBuilds, packageName]
+                                           build buildId db -- Build needs an argument swap to work with foldM
+        buildIds = Map.keys $ idMap buildDatabase
+        totalBuilds = show $ length buildIds
+
 --Helper function add a build result to the database
 addBuildResult :: BuildDatabase ->  BuildId -> BuildResult -> BuildDatabase
 addBuildResult buildDatabase buildId buildResult = buildDatabase {resultMap = resultMap'}
@@ -200,7 +225,7 @@ addBuildResult buildDatabase buildId buildResult = buildDatabase {resultMap = re
 
 --Helper functions for constructing a BuildData  
 --Filter out only those elements of the context which are dependencies of this package
-getDependenciesFromContext :: PackageDatabase -> Context -> PackageName -> [PackageName]
+getDependenciesFromContext :: (PackageDatabase db) => db -> Context -> PackageName -> [PackageName]
 getDependenciesFromContext database context packageName = filter isDependant context
           --A context package is dependent if it is a different version of a known dependency of this package
     where isDependant cPackage = any (differentVersions cPackage) depends

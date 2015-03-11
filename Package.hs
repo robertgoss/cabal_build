@@ -1,7 +1,7 @@
-module Package(PackageName, PackageDependencies, Package(..), PackageDatabase(),
+module Package(PackageName, PackageDependencies, Package(..), PackageDatabase,
                packageName,differentVersions,
                fromSystem,
-               packageList, getPackage, getVersions,
+               packageList, getPackage,
                saveDatabase, loadDatabase
               ) where
 
@@ -12,6 +12,7 @@ import Data.List.Split(splitOn)
 import Text.Format(format)
 import Control.Monad(forM)
 import Data.ByteString as BS(writeFile, readFile)
+import Data.Maybe(fromJust)
 
 import Data.Serialize(encode,decode)
 
@@ -46,49 +47,60 @@ differentVersions  pName1 pName2 = name1 == name2
   where (name1,_) = splitPackageName pName1
         (name2,_) = splitPackageName pName2
 
-newtype PackageDatabase = PackageDatabase (Map.Map PackageName PackageDependencies)
+--An abstrction of the features of a package database used in memeory
+class PackageDatabase a where
+  emptyDatabase :: a
+  keys :: a -> [PackageName]
+  insert :: PackageName -> PackageDependencies -> a -> a
+  getDependency :: a -> PackageName -> Maybe PackageDependencies
+
+--A package database held completely in memory
+newtype PackageDatabaseMemory = PackageDatabaseMemory (Map.Map PackageName PackageDependencies)
+
+instance PackageDatabase PackageDatabaseMemory where
+  emptyDatabase = PackageDatabaseMemory Map.empty
+  keys (PackageDatabaseMemory depMap) = Map.keys depMap
+  insert name dep (PackageDatabaseMemory depMap) = PackageDatabaseMemory $ Map.insert name dep depMap
+  getDependency (PackageDatabaseMemory depMap) name = Map.lookup name depMap
 
 
 --Load / Save database to a file
 
-saveDatabase :: PackageDatabase -> IO ()
-saveDatabase (PackageDatabase database) = BS.writeFile "package.data" $ encode database
+saveDatabase :: PackageDatabaseMemory -> IO ()
+saveDatabase (PackageDatabaseMemory database) = BS.writeFile "package.data" $ encode database
 
 --Note will error if cannot decode database - unsafe!!
-loadDatabase :: IO PackageDatabase
+loadDatabase :: IO PackageDatabaseMemory
 loadDatabase = do bytestring <- BS.readFile "package.data"
                   case (decode bytestring) of
-                      (Right database) -> return (PackageDatabase database)
+                      (Right database) -> return (PackageDatabaseMemory database)
 
 
 --Basic constructors of the full package database - either from a file or directly computed from system.
 --  These are the only constructors to be exported from this module so no partially constructed databases are made.
 -- Get the list of packagenames from the system and then iterativly add then to the system
 -- Calling system to get the dependance for the package
-fromSystem :: IO PackageDatabase
+fromSystem :: (PackageDatabase db) => IO db
 fromSystem = do System.cleanCabalSystem -- Clean system so there are no local packages to mess dependencies.
                 putStrLn "Loading package list..."
                 packageNames <- packageListFromSystem
                 let totalPackages = show $ length packageNames
                 --Get the packages using packageFromSystem we add an enumeration to
                 -- Allow us to trace the process as it is very slow.
-                packages <- forM (zip [1..] packageNames) $ \(i,name) ->
-                                             do putStrLn $ format "{0}/{1} - {2}" [show i, totalPackages, name]
+                packages <- forM (zip indices packageNames) $ \(index,name) ->
+                                             do putStrLn $ format "{0}/{1} - {2}" [show index, totalPackages, name]
                                                 packageFromSystem name
                 putStrLn "Compiling database..."
                 return $ foldl addPackage' emptyDatabase packages -- Swap arguments to addPackage to work with foldl                                                       
   where addPackage' a b = addPackage b a
+        indices = [1..] :: [Int]
 
 
 --Sub contructors used internally in this module to construct the package database from the system
 
---  Construct an empty database
-emptyDatabase :: PackageDatabase
-emptyDatabase = PackageDatabase Map.empty
-
 --  Add package to the database
-addPackage :: Package -> PackageDatabase -> PackageDatabase
-addPackage package (PackageDatabase database) = PackageDatabase $ Map.insert name pDependencies database
+addPackage :: (PackageDatabase db) => Package -> db -> db
+addPackage package database = insert name pDependencies database
     where name = packageName package
           pDependencies = dependencies package
 
@@ -114,25 +126,16 @@ packageListFromSystem = System.packageList
 
 --The list of available packages
 --Uses the keys of the dependence map to get list of packageNames
-packageList :: PackageDatabase -> [Package]
+packageList :: (PackageDatabase db) => db -> [Package]
 packageList database = map (getPackage database) names
-    where names = Map.keys dependenceMap
-          (PackageDatabase dependenceMap) = database
+    where names = keys database
 
 --Get package from the database from it's package name
-getPackage :: PackageDatabase -> PackageName -> Package
+-- Is assumed to be in database
+getPackage :: (PackageDatabase db) => db -> PackageName -> Package
 getPackage database name = Package { name = packageName,
                                      version = packageVersion,
                                      dependencies = packageDependencies
                                    }
-    where (PackageDatabase dependenceMap) = database
-          packageDependencies = dependenceMap Map.! name
+    where packageDependencies = fromJust $ getDependency database name
           (packageName, packageVersion) = splitPackageName name
-
---Get all versions of a given package in the database
--- Very inefficient it currently scans the full list of packages.
--- TODO add cache to PackageDatabase
-getVersions :: PackageDatabase -> Package -> [Package]
-getVersions database package = filter sameName $ packageList database
-  where sameName otherPackage = name otherPackage == packageName
-        packageName = name package
