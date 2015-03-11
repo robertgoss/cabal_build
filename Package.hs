@@ -1,6 +1,7 @@
 module Package(PackageName, PackageDependencies, Package(..), PackageDatabase(..),
-               packageName,differentVersions,
+               packageName,differentVersions,splitPackageName,
                fromSystem,
+               convertBackend,
                packageList, getPackage,
               ) where
 
@@ -48,6 +49,18 @@ class PackageDatabase a where
   keys :: a -> IO [PackageName]
   insert :: PackageName -> PackageDependencies -> a -> IO a
   getDependency :: a -> PackageName -> IO (Maybe PackageDependencies)
+
+--Convert data between backends
+convertBackend :: (PackageDatabase a, PackageDatabase b) => a -> IO b
+convertBackend database = do empty <- emptyDatabase
+                             names <- keys database
+                             let total = length names
+                             foldM (movePackage total) empty $ zip [1..] names
+    where movePackage total db (i,name) = do putStrLn $ format "{0}/{1} {2}" [show total, show i, name] -- Adding a trace
+                                             pkg <- getPackage database name
+                                             let pName = packageName pkg
+                                                 deps = dependencies pkg
+                                             insert pName deps db
 
 
 --Basic constructors of the full package database - either from a file or directly computed from system.
