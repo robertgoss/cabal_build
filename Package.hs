@@ -114,6 +114,7 @@ packageListFromSystem = System.packageList
 
 --The list of available packages
 --Uses the keys of the dependence map to get list of packageNames
+-- As creates all the packages is dangerous in memory!!!
 packageList :: (PackageDatabase db) => db -> IO [Package]
 packageList database = do names <- keys database
                           mapM (getPackage database) names
