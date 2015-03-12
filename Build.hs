@@ -1,5 +1,5 @@
 module Build(BuildDatabase(..),BuildData(..),BuildResult(..),BuildId,
-             addAllPrimaryBuildData) where
+             addAllPrimaryBuildData,addPrimaryBuildData) where
 
 import Package
 import BuildResult
@@ -11,8 +11,6 @@ import Control.Monad(foldM)
 import Text.Format(format)
 import Data.List(sort,intersperse)
 import Data.Word(Word64)
-
-import Debug.Trace(trace)
 
 type BuildId = Word64
 
@@ -50,6 +48,8 @@ data Build = Build BuildData BuildResult
 class BuildDatabase db where
   emptyBuildDatabase :: IO db
 
+  idExists :: db -> BuildId -> IO Bool
+
   addId :: BuildId -> BuildData -> db -> IO db
   addResult :: BuildId -> BuildResult -> db -> IO db
   addPrimary :: PackageName -> BuildId -> db -> IO db
@@ -74,10 +74,12 @@ fromPackageDatabase packageDatabase = do empty <- emptyBuildDatabase
 --Add the buildData for all the packages in the packageDatabase as primary builds to the 
 -- build database use a fold to update the database over the packagelist
 addAllPrimaryBuildData :: (PackageDatabase db, BuildDatabase buildDb) => db -> buildDb -> IO buildDb
-addAllPrimaryBuildData packageDatabase buildDatabase = do packages <- packageList packageDatabase
-                                                          let packageNames = map packageName packages
-                                                          foldM addPrimaryIter buildDatabase packageNames
-    where addPrimaryIter currBuildDatabase currPackage = trace currPackage $ addPrimaryBuildData currPackage packageDatabase currBuildDatabase
+addAllPrimaryBuildData packageDatabase buildDatabase = do packageNames <- keys packageDatabase
+                                                          let indexedPackageNames = zip [1..] packageNames
+                                                              total = show $ length packageNames
+                                                          foldM (addPrimaryIter total) buildDatabase indexedPackageNames
+    where addPrimaryIter total currBuildDatabase (i,currPackage) = do putStrLn $ format "{0}/{1} {2}" [show i, total,currPackage]
+                                                                      addPrimaryBuildData currPackage packageDatabase currBuildDatabase
 
 
 --Add the buildData of the following primary build and it's dependencies to the database
@@ -111,9 +113,9 @@ addNonPrimaryBuildData context name packageDatabase buildDatabase
          = do depends <- getDependenciesFromContext packageDatabase context name
               let --Can get id without having to check all sub-packages which is faster
                 buildId = getIdFromPackages name depends
-              buildResult <- getResult buildDatabase buildId
-              --To avoid readding data to the database we see if the id associated to this build is in the dataase already
-              if buildResult /= NotBuilt then 
+              buildExist <- idExists buildDatabase buildId
+              --We use here the more efficient method of checking the new idExist function to see if data is alredy added
+              if buildExist then 
                 return (buildId, buildDatabase)
               else
                 addNonPrimaryBuildData' depends buildId

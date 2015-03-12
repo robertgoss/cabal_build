@@ -22,6 +22,8 @@ data BuildDatabaseMemory = BuildDatabaseMemory {
 instance BuildDatabase BuildDatabaseMemory where
   emptyBuildDatabase = return $ BuildDatabaseMemory Map.empty Map.empty Map.empty
 
+  idExists buildDatabase buildId = return . Map.member buildId $ idMap buildDatabase
+
   addId buildId buildData database = return $ database {idMap = idMap'}
     where idMap' = Map.insert buildId buildData $ idMap database
   addResult buildId buildResult database = return $ database {resultMap = resultMap'}
