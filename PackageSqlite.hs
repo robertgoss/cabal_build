@@ -52,10 +52,10 @@ instance Package.PackageDatabase PackageDatabaseSqlite where
                                                          return PackageDatabaseSqlite
 
     --Get a source of package names
-    -- Source means they dont all need to be loaded into memory.
-    -- Use a transPipe to get out in the IO monad so we dont leak internal state
-    packageNameSource _ = transPipe (runSqlite "package-sqlite.data") $ selectSource [] []
-                                                                        $= CL.map (packageSqliteName . entityVal)
+    -- Source means they dont all need to be loaded into memory - only id's need to be in memory
+    packageNameSource _ = do ids <- runSqlite "package-sqlite.data" $ selectKeyList
+                             return $ sourceList ids $= CL.mapM getPackage
+          where getPackage pid = runSqlite "package-sqlite.data" . fmap (packageSqliteName . fromJust) $ get pid
 
     insert name deps _ = runSqlite "package-sqlite.data" $ do insertQuery name deps
                                                               return PackageDatabaseSqlite

@@ -12,7 +12,7 @@ newtype PackageDatabaseMemory = PackageDatabaseMemory (Map.Map PackageName Packa
 
 instance PackageDatabase PackageDatabaseMemory where
   emptyDatabase = return $ PackageDatabaseMemory Map.empty
-  packageNameSource (PackageDatabaseMemory depMap) = CL.sourceList $ Map.keys depMap
+  packageNameSource (PackageDatabaseMemory depMap) = return . CL.sourceList $ Map.keys depMap
   insert name dep (PackageDatabaseMemory depMap) = return $ PackageDatabaseMemory $ Map.insert name dep depMap
   getDependency (PackageDatabaseMemory depMap) name = return $ Map.lookup name depMap
 

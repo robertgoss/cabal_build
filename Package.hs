@@ -49,14 +49,15 @@ differentVersions  pName1 pName2 = name1 == name2
 --An abstrction of the features of a package database used in memeory
 class PackageDatabase a where
   emptyDatabase :: IO a
-  packageNameSource :: a -> Source IO PackageName
+  packageNameSource :: a -> IO (Source IO PackageName)
   insert :: PackageName -> PackageDependencies -> a -> IO a
   getDependency :: a -> PackageName -> IO (Maybe PackageDependencies)
 
 --Convert data between backends
 convertBackend :: (PackageDatabase a, PackageDatabase b) => a -> IO b
 convertBackend database = do empty <- emptyDatabase
-                             packageNameSource database $$ CL.foldM movePackage empty -- Fold over the source of names
+                             nameSource <- packageNameSource database
+                             nameSource $$ CL.foldM movePackage empty -- Fold over the source of names
     where movePackage db name = do putStrLn name -- Adding a trace
                                    pkg <- getPackage database name
                                    let pName = packageName pkg
@@ -114,14 +115,16 @@ packageListFromSystem = System.packageList
 --Properties of the package database that can be extracted
 
 --A source of the availible packages much more memory friendly (hopefully than packageList)
-packageSource :: (PackageDatabase db) => db -> Source IO Package
-packageSource database = packageNameSource database $= CL.mapM (getPackage database)
+packageSource :: (PackageDatabase db) => db -> IO (Source IO Package)
+packageSource database = do nameSource <- packageNameSource database
+                            return $ nameSource $= CL.mapM (getPackage database)
 
 
 --The list of available packages
 -- As creates all the packages is dangerous in memory!!!
 packageList :: (PackageDatabase db) => db -> IO [Package]
-packageList database = packageSource database $$ CL.consume
+packageList database = do pkgSource <- packageSource database
+                          pkgSource $$ CL.consume
 
 --Get package from the database from it's package name
 -- Is assumed to be in database
