@@ -51,17 +51,18 @@ instance Package.PackageDatabase PackageDatabaseSqlite where
     emptyDatabase = runSqlite "package-sqlite.data" $ do runMigration migrateAll
                                                          return PackageDatabaseSqlite
 
-    keys _ = runSqlite "package-sqlite.data" $ keysQuery
+    --Get a source of package names
+    -- Source means they dont all need to be loaded into memory.
+    -- Use a transPipe to get out in the IO monad so we dont leak internal state
+    packageNameSource _ = transPipe (runSqlite "package-sqlite.data") $ selectSource [] []
+                                                                        $= CL.map (packageSqliteName . entityVal)
 
     insert name deps _ = runSqlite "package-sqlite.data" $ do insertQuery name deps
                                                               return PackageDatabaseSqlite
     getDependency _ name = runSqlite "package-sqlite.data" $ dependenceQuery name
 
 
---Get database keys - no filter only return name
--- Use an conduit and filte the list as go so dont need all dpendencies in memory when 
-keysQuery = selectSource [] [] $= CL.map onlyName $$ CL.consume
-        where onlyName = packageSqliteName . entityVal
+
 --Required queries
 
 insertQuery name deps

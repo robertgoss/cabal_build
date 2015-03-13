@@ -12,6 +12,9 @@ import Text.Format(format)
 import Control.Monad(forM, foldM)
 import Data.Maybe(fromJust)
 
+import Data.Conduit
+import qualified Data.Conduit.List as CL
+
 type PackageName = String
 type PackageDependencies = Maybe [PackageName] -- Wrapped in a maybe to indicate if dependencies could not be resolved.
 
@@ -46,21 +49,19 @@ differentVersions  pName1 pName2 = name1 == name2
 --An abstrction of the features of a package database used in memeory
 class PackageDatabase a where
   emptyDatabase :: IO a
-  keys :: a -> IO [PackageName]
+  packageNameSource :: a -> Source IO PackageName
   insert :: PackageName -> PackageDependencies -> a -> IO a
   getDependency :: a -> PackageName -> IO (Maybe PackageDependencies)
 
 --Convert data between backends
 convertBackend :: (PackageDatabase a, PackageDatabase b) => a -> IO b
 convertBackend database = do empty <- emptyDatabase
-                             names <- keys database
-                             let total = length names
-                             foldM (movePackage total) empty $ zip [1..] names
-    where movePackage total db (i,name) = do putStrLn $ format "{0}/{1} {2}" [show total, show i, name] -- Adding a trace
-                                             pkg <- getPackage database name
-                                             let pName = packageName pkg
-                                                 deps = dependencies pkg
-                                             insert pName deps db
+                             packageNameSource database $$ CL.foldM movePackage empty -- Fold over the source of names
+    where movePackage db name = do putStrLn name -- Adding a trace
+                                   pkg <- getPackage database name
+                                   let pName = packageName pkg
+                                       deps = dependencies pkg
+                                   insert pName deps db
 
 
 --Basic constructors of the full package database - either from a file or directly computed from system.
@@ -112,12 +113,15 @@ packageListFromSystem = System.packageList
 
 --Properties of the package database that can be extracted
 
+--A source of the availible packages much more memory friendly (hopefully than packageList)
+packageSource :: (PackageDatabase db) => db -> Source IO Package
+packageSource database = packageNameSource database $= CL.mapM (getPackage database)
+
+
 --The list of available packages
---Uses the keys of the dependence map to get list of packageNames
 -- As creates all the packages is dangerous in memory!!!
 packageList :: (PackageDatabase db) => db -> IO [Package]
-packageList database = do names <- keys database
-                          mapM (getPackage database) names
+packageList database = packageSource database $$ CL.consume
 
 --Get package from the database from it's package name
 -- Is assumed to be in database
