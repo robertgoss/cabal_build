@@ -35,8 +35,12 @@ dependencies = shelly . silently . liftM (fmap (map T.unpack)) . dependenciesSh
 dependenciesSh :: String -> Sh (Maybe [T.Text])
 dependenciesSh name = errExit False $ do depText <- run "cabal" ["install", package , "--dry-run"]
                                          exitCode <- lastExitCode
-                                         if exitCode == 0 then return . Just $ processOutput depText
-                                         	              else return Nothing
+                                         let installed = isInstalled depText
+                                         --Package has a resolution failed and cant be installed 
+                                         -- If the dry-run failes or if it is already installed.
+                                         if (exitCode == 0) && (not installed)
+                                                          then return . Just $ processOutput depText
+                                         	                else return Nothing
     where package = T.pack name
           --Process the output of the dry run into the dependencies
           --Split into lines, drop the first 2 lines which are boilerplate
@@ -45,6 +49,10 @@ dependenciesSh name = errExit False $ do depText <- run "cabal" ["install", pack
           -- information given on some lines
           processOutput = map dropLatest . drop 2 . init . T.lines
           dropLatest = head . T.splitOn " "
+          --See if this package is installed already and so will propt a build failure
+          -- check the second line of the out put to see if it is the same as some 
+          -- given text
+          isInstalled output = (T.lines output) !! 1 == "All the requested packages are already installed:"
 
 --Build the current list of packages return the success or failure of the build.
 build :: [String] -> IO Bool
