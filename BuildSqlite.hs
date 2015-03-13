@@ -14,7 +14,7 @@ import Database.Persist
 import Database.Persist.TH
 import Database.Persist.Sqlite
 import Data.Conduit
-import Data.Conduit.List
+import qualified Data.Conduit.List as CL
 import Data.Maybe(fromJust, isJust)
 
 import Debug.Trace(trace)
@@ -31,8 +31,7 @@ import qualified Data.Set as Set
 share [mkPersist sqlSettings, mkMigrate "migrateAll"] [persistLowerCase|
 BuildData
     package Package.PackageName --Store the full package name
-    buildDependencies [Build.BuildId] Maybe --PackageDependencies but mkPersist need alternative def.
-    packageDependencies [Package.PackageName] Maybe --PackageDependencies but mkPersist need alternative def.
+    resolutionFailed Bool -- Stores if a resolution has failed
     buildHash Build.BuildId
     UniqueId buildHash  -- The buildhash should be unique.
     deriving Show
@@ -45,6 +44,13 @@ Primary
     package Package.PackageName
     buildId Build.BuildId 
     UniquePackage package 
+    deriving Show
+BuildDependance -- Expresses relation of a build being dependant on another.
+    build BuildDataId
+    dependant Build.BuildId
+PackageDependance -- Expresses relation of a build being dependant on a package.
+    build BuildDataId
+    dependant Package.PackageName
     deriving Show
 |] 
 
@@ -81,7 +87,7 @@ instance Build.BuildDatabase BuildDatabaseSqlite where
 --Required Queries
 --Get database ids - no filter only return name
 -- Use an conduit and filte the list as go so dont need all in memory
-allIdsQuery =  selectSource [] [] $$ Data.Conduit.List.map onlyName =$ consume
+allIdsQuery =  selectSource [] [] $$ CL.map onlyName =$ CL.consume
     where onlyName = buildDataBuildHash . entityVal
 
 --Get result find result entity with id and extract result
@@ -92,21 +98,39 @@ getResultQuery buildId = do entity' <- getBy $ UniqueResultId buildId
 
 --Get result find entity with id and extract and construct build data 
 getDataQuery buildId = do entity <- fmap fromJust $ getBy $ UniqueId buildId 
-                          let val = entityVal entity
+                          let buildDataId = entityKey entity
+                              val = entityVal entity
                               package = buildDataPackage val
-                              buildDependencies = buildDataBuildDependencies val
-                              packageDependencies = buildDataPackageDependencies val
-                          return $ Build.BuildData package packageDependencies buildDependencies
+                              resFailed = buildDataResolutionFailed val
+                          --If resolution failed we can return now else get the dependencies
+                          if resFailed then return $ Build.BuildData package Nothing Nothing
+                          else do bDependencies' <- selectList [BuildDependanceBuild ==. buildDataId] []
+                                  pDependencies' <- selectList [PackageDependanceBuild ==. buildDataId] []
+                                  --Get build and ackage dependance entities.
+                                  let bDependencies = map (buildDependanceDependant . entityVal) bDependencies'
+                                      pDependencies = map (packageDependanceDependant . entityVal) pDependencies'
+                                  return $ Build.BuildData package (Just pDependencies) (Just bDependencies)
 
 --Add id by construction sqlite build data and inserting it
 --Guard against repeat adds -> The guard now performed by set in database
 -- Also insert into result table
-addIdQuery buildId buildData = do insertUnique buildDataSqlite
-                                  insertUnique $ Result buildId BuildResult.NotBuilt
+addIdQuery buildId buildData = do buildSqliteId <- insertUnique buildDataSqlite
+                                  case buildSqliteId of
+                                    Nothing -> return () -- This id is already in database
+                                    (Just bid) -> do insertUnique $ Result buildId BuildResult.NotBuilt
+                                                     case buildDependencies' of
+                                                       Nothing -> return () 
+                                                       otherwise -> do insertMany_ . map (BuildDependance bid) $ deps -- If there are dependencies insert relations 
+                                                                       insertMany_ . map (PackageDependance bid) $ pDeps
+
     where package' = Build.package buildData
-          packageDependencies' = Build.packageDependencies buildData
           buildDependencies' = Build.buildDependencies buildData
-          buildDataSqlite = BuildData package' buildDependencies' packageDependencies' buildId
+          packageDependencies' = Build.packageDependencies buildData
+          resFailure = buildDependencies' == Nothing -- A resolution has failed if buildDependencies contains nothing
+          buildDataSqlite = BuildData package' resFailure buildId -- The buildData
+          --From just dep and pdeps -- only use after resolution shown to exist
+          deps = fromJust buildDependencies'
+          pDeps = fromJust packageDependencies'
 
 --Add result by finding result with build id and updating it's build result
 addResultQuery buildId buildResult = do entity <- fmap fromJust $ getBy $ UniqueResultId buildId
