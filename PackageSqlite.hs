@@ -53,8 +53,8 @@ instance Package.PackageDatabase PackageDatabaseSqlite where
 
     --Get a source of package names
     -- Source means they dont all need to be loaded into memory - only id's need to be in memory
-    packageNameSource _ = do ids <- runSqlite "package-sqlite.data" $ selectKeyList
-                             return $ sourceList ids $= CL.mapM getPackage
+    packageNameSource _ = do ids <- runSqlite "package-sqlite.data" $ selectKeysList [] []
+                             return $ CL.sourceList ids $= CL.mapM getPackage
           where getPackage pid = runSqlite "package-sqlite.data" . fmap (packageSqliteName . fromJust) $ get pid
 
     insert name deps _ = runSqlite "package-sqlite.data" $ do insertQuery name deps
