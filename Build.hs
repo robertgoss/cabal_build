@@ -12,6 +12,9 @@ import Text.Format(format)
 import Data.List(sort,intersperse)
 import Data.Word(Word64)
 
+import Data.Conduit
+import qualified Data.Conduit.List as CL
+
 type BuildId = Word64
 
 
@@ -73,13 +76,12 @@ fromPackageDatabase packageDatabase = do empty <- emptyBuildDatabase
 
 --Add the buildData for all the packages in the packageDatabase as primary builds to the 
 -- build database use a fold to update the database over the packagelist
+-- Perform fold in conduit to reduce amount loaded into memory
 addAllPrimaryBuildData :: (PackageDatabase db, BuildDatabase buildDb) => db -> buildDb -> IO buildDb
-addAllPrimaryBuildData packageDatabase buildDatabase = do packageNames <- keys packageDatabase
-                                                          let indexedPackageNames = zip [1..] packageNames
-                                                              total = show $ length packageNames
-                                                          foldM (addPrimaryIter total) buildDatabase indexedPackageNames
-    where addPrimaryIter total currBuildDatabase (i,currPackage) = do putStrLn $ format "{0}/{1} {2}" [show i, total,currPackage]
-                                                                      addPrimaryBuildData currPackage packageDatabase currBuildDatabase
+addAllPrimaryBuildData packageDatabase buildDatabase = do nameSource <- packageNameSource packageDatabase
+                                                          nameSource $$ CL.foldM addPrimaryIter buildDatabase -- Fuse together source and fold
+    where addPrimaryIter currBuildDatabase currPackage = do putStrLn currPackage
+                                                            addPrimaryBuildData currPackage packageDatabase currBuildDatabase
 
 
 --Add the buildData of the following primary build and it's dependencies to the database
