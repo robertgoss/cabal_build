@@ -41,10 +41,9 @@ splitPackageName packageName = (name , version)
           version = map read $ splitOn "." verPart
 
 --Return if the 2 given packages are different versions of the same name.
-differentVersions :: PackageName -> PackageName -> Bool
-differentVersions  pName1 pName2 = name1 == name2
-  where (name1,_) = splitPackageName pName1
-        (name2,_) = splitPackageName pName2
+differentVersions :: Package -> PackageName -> Bool
+differentVersions  pkg pName = name pkg == name2
+  where (name2,_) = splitPackageName pName
 
 --An abstrction of the features of a package database used in memeory
 class PackageDatabase a where
