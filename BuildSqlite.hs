@@ -15,11 +15,15 @@ import Database.Persist.TH
 import Database.Persist.Sqlite
 import Data.Conduit
 import Data.Conduit.List
-import Data.Maybe(fromJust)
+import Data.Maybe(fromJust, isJust)
+
+import Debug.Trace(trace)
 
 import qualified Build
 import qualified Package
 import qualified BuildResult
+
+import qualified Data.Set as Set
 
 --Setup a datatype to store build data as persist objects
 -- Also store the results map, id map and primary map
@@ -30,9 +34,12 @@ BuildData
     buildDependencies [Build.BuildId] Maybe --PackageDependencies but mkPersist need alternative def.
     packageDependencies [Package.PackageName] Maybe --PackageDependencies but mkPersist need alternative def.
     buildHash Build.BuildId
-    buildResult BuildResult.BuildResult
-    primary Bool -- Is this build a primary build
     UniqueId buildHash  -- The buildhash should be unique.
+    deriving Show
+Result
+    buildId Build.BuildId
+    buildResult BuildResult.BuildResult
+    UniqueResultId buildId
     deriving Show
 Primary
     package Package.PackageName
@@ -46,25 +53,30 @@ Primary
 data BuildDatabaseSqlite = BuildDatabaseSqlite
 
 --Make sure migrations are run in load
-loadBuildDatabase :: IO BuildDatabaseSqlite
-loadBuildDatabase = do runSqlite "build-sqlite.data" $ runMigration migrateAll
-                       return BuildDatabaseSqlite
+--loadBuildDatabase :: IO BuildDatabaseSqlite
+--loadBuildDatabase = do runSqlite "build-sqlite.data" $ runMigration migrateAll
+--                       return BuildDatabaseSqlite
 
 
 instance Build.BuildDatabase BuildDatabaseSqlite where
     emptyBuildDatabase = runSqlite "build-sqlite.data" $ do runMigration migrateAll
-                                                            return BuildDatabaseSqlite
+                                                            return $ BuildDatabaseSqlite 
 
     addId buildId buildData _ = runSqlite "build-sqlite.data" $ do addIdQuery buildId buildData
                                                                    return BuildDatabaseSqlite
-    addResult buildId buildResult _ = runSqlite "build-sqlite.data" $ do addResultQuery buildId buildResult
-                                                                         return BuildDatabaseSqlite
-    addPrimary package buildId _ = runSqlite "build-sqlite.data" $ do addPrimaryQuery package buildId
-                                                                      return BuildDatabaseSqlite
+
+    addResult buildId buildResult db = runSqlite "build-sqlite.data" $ do addResultQuery buildId buildResult
+                                                                          return db
+    addPrimary package buildId db = runSqlite "build-sqlite.data" $ do addPrimaryQuery package buildId
+                                                                       return db
 
     getData _ buildId = runSqlite "build-sqlite.data" $ getDataQuery buildId
+
     getResult _ buildId = runSqlite "build-sqlite.data" $ getResultQuery buildId
+
     allIds _ = runSqlite "build-sqlite.data" $ allIdsQuery
+
+    idExists _ buildId = runSqlite "build-sqlite.data" $ idExistsQuery buildId
 
 --Required Queries
 --Get database ids - no filter only return name
@@ -72,9 +84,11 @@ instance Build.BuildDatabase BuildDatabaseSqlite where
 allIdsQuery =  selectSource [] [] $$ Data.Conduit.List.map onlyName =$ consume
     where onlyName = buildDataBuildHash . entityVal
 
---Get result find entity with id and extract result
-getResultQuery buildId = do entity <- fmap fromJust $ getBy $ UniqueId buildId 
-                            return . buildDataBuildResult . entityVal $ entity
+--Get result find result entity with id and extract result
+getResultQuery buildId = do entity' <- getBy $ UniqueResultId buildId 
+                            case entity' of
+                                (Just entity) -> return . resultBuildResult . entityVal $ entity
+                                Nothing -> return BuildResult.NotBuilt
 
 --Get result find entity with id and extract and construct build data 
 getDataQuery buildId = do entity <- fmap fromJust $ getBy $ UniqueId buildId 
@@ -85,14 +99,21 @@ getDataQuery buildId = do entity <- fmap fromJust $ getBy $ UniqueId buildId
                           return $ Build.BuildData package packageDependencies buildDependencies
 
 --Add id by construction sqlite build data and inserting it
-addIdQuery buildId buildData = insert $ BuildData package' buildDependencies' packageDependencies' buildId BuildResult.NotBuilt False
+--Guard against repeat adds -> The guard now performed by set in database
+-- Also insert into result table
+addIdQuery buildId buildData = do insertUnique buildDataSqlite
+                                  insertUnique $ Result buildId BuildResult.NotBuilt
     where package' = Build.package buildData
           packageDependencies' = Build.packageDependencies buildData
           buildDependencies' = Build.buildDependencies buildData
+          buildDataSqlite = BuildData package' buildDependencies' packageDependencies' buildId
 
---Add result by finding build data with build id and updating it's build result
-addResultQuery buildId buildResult = do entity <- fmap fromJust $ getBy $ UniqueId buildId
-                                        update (entityKey entity) [BuildDataBuildResult =. buildResult]
+--Add result by finding result with build id and updating it's build result
+addResultQuery buildId buildResult = do entity <- fmap fromJust $ getBy $ UniqueResultId buildId
+                                        update (entityKey entity) [ResultBuildResult =. buildResult]
 
 --Insert a link by constructing an element of the primary table
 addPrimaryQuery package buildId = insert $ Primary package buildId
+
+--See just if this id exists in the database
+idExistsQuery buildId = fmap isJust . getBy $ UniqueId buildId
