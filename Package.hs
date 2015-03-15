@@ -70,18 +70,19 @@ convertBackend database = do empty <- emptyDatabase
 -- Calling system to get the dependance for the package
 fromSystem :: (PackageDatabase db) => IO db
 fromSystem = do System.cleanCabalSystem -- Clean system so there are no local packages to mess dependencies.
+                putStrLn "Create empty database"
+                empty <- emptyDatabase
                 putStrLn "Loading package list..."
                 packageNames <- packageListFromSystem
                 let totalPackages = show $ length packageNames
                 --Get the packages using packageFromSystem we add an enumeration to
                 -- Allow us to trace the process as it is very slow.
-                packages <- forM (zip indices packageNames) $ \(index,name) ->
-                                             do putStrLn $ format "{0}/{1} - {2}" [show index, totalPackages, name]
-                                                packageFromSystem name
-                putStrLn "Compiling database..."
-                empty <- emptyDatabase
-                foldM addPackage' empty packages -- Swap arguments to addPackage to work with foldl                                                       
-  where addPackage' a b = addPackage b a
+                -- Then add the package to the database
+                -- Use a fold to keep the database updated
+                foldM (getAndAddPackage totalPackages) empty $ zip indices packageNames                                          
+  where getAndAddPackage total db (index, name) = do putStrLn $ format "{0}/{1} - {2}" [show index, total, name] --Trace a line.
+                                                     package <- packageFromSystem name -- Get the packae information from the system.
+                                                     addPackage package db -- Add package to the database and return the new database.
         indices = [1..] :: [Int]
 
 
