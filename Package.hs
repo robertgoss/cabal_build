@@ -114,7 +114,10 @@ packageFromSystem package = do (installed, packageDependencies) <- packageDepend
 packageDependenciesFromSystem :: PackageName -> IO (Bool,PackageDependencies) 
 packageDependenciesFromSystem name = do depEither <- System.dependencies name
                                         return $ case depEither of
+                                                    --Full success
                                                     Right deps -> (False, Just deps)
+                                                    Left System.ReinstallsNeeded -> (False,Nothing) 
+                                                    -- Treat reinstalls as a resolution failure
                                                     Left System.ResolutionFail -> (False, Nothing)
                                                     Left System.PackageInstalled -> (True, Nothing)
 

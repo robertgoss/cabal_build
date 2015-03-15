@@ -2,7 +2,8 @@
 {-# LANGUAGE ExtendedDefaultRules #-}
 {-# OPTIONS_GHC -fno-warn-type-defaults #-}
 module System(packageList,dependencies,build,
-	          cleanCabalSystem) where
+	           cleanCabalSystem,
+             DepError(..)) where
 
 --Import of shelly library - it defaults to using Text instead of string
 --  This reduces coercion for literals by default to Text.
@@ -23,24 +24,34 @@ packageListSh :: Sh [T.Text]
 packageListSh = liftM processOutput $ run "cabal" ["list","--simple"]
 	where processOutput = T.lines . T.replace " " "-"
 
+--A data structure to encode the different ways the dependencies function can fail.
+data DepError = ResolutionFail
+                | PackageInstalled
+                | ReinstallsNeeded
 --Given the current package-name find the dependent packages that would need
--- to be installed. This is wrapped in a maybe to detect a failure in resolution.
+-- to be installed. This is wrapped in a either to detect a failure in resolution or if
+-- the package is already installed.
 -- We unpack the inner text into a string.
-dependencies :: String -> IO (Maybe [String])
+dependencies :: String -> IO (Either DepError [String])
 dependencies = shelly . silently . liftM (fmap (map T.unpack)) . dependenciesSh
 
 
 --Get dependencies by performing a dry-run installation.
---Use errExit false as we will use lastExitCode to see if it failed then wrap result in a maybe
-dependenciesSh :: String -> Sh (Maybe [T.Text])
+--Use errExit false as we will use lastExitCode to see if it failed then wrap result in a either
+dependenciesSh :: String -> Sh (Either DepError [T.Text])
 dependenciesSh name = errExit False $ do depText <- run "cabal" ["install", package , "--dry-run"]
                                          exitCode <- lastExitCode
                                          let installed = isInstalled depText
+                                             reinstalls = needReinstalled depText
                                          --Package has a resolution failed and cant be installed 
                                          -- If the dry-run failes or if it is already installed.
-                                         if (exitCode == 0) && (not installed)
-                                                          then return . Just $ processOutput depText
-                                         	                else return Nothing
+                                         if (exitCode == 0) then
+                                             if (not installed) then
+                                                if (not reinstalls)
+                                                          then return . Right $ processOutput depText
+                                                          else return $ Left ReinstallsNeeded
+                                         	      else return $ Left PackageInstalled
+                                             else return $ Left ResolutionFail
     where package = T.pack name
           --Process the output of the dry run into the dependencies
           --Split into lines, drop the first 2 lines which are boilerplate
@@ -53,6 +64,10 @@ dependenciesSh name = errExit False $ do depText <- run "cabal" ["install", pack
           -- check the second line of the out put to see if it is the same as some 
           -- given text
           isInstalled output = (T.lines output) !! 1 == "All the requested packages are already installed:"
+          --See if reinstalls of (system) packages are needed
+          -- For now we will treat this as a plain build failure 
+          -- Check last line for given text.
+          needReinstalled output = last (T.lines output) == "Use --force-reinstalls if you want to install anyway."
 
 --Build the current list of packages return the success or failure of the build.
 build :: [String] -> IO Bool
