@@ -16,6 +16,7 @@ import Database.Persist.Sqlite
 import Data.Conduit
 import qualified Data.Conduit.List as CL
 import Data.Maybe(fromJust)
+import Debug.Trace(trace)
 
 import qualified Package 
 
@@ -27,6 +28,7 @@ share [mkPersist sqlSettings, mkMigrate "migrateAll"] [persistLowerCase|
 PackageSqlite
     name Package.PackageName -- Allow pulling name list out of database without reconstructing dependencies
     resolutionFailed Bool -- If the resolution failed
+    installed Bool --If this package is installed on the system
     UniqueName name
     deriving Show 
 PackageDependence
@@ -57,17 +59,19 @@ instance Package.PackageDatabase PackageDatabaseSqlite where
                              return $ CL.sourceList ids $= CL.mapM getPackage
           where getPackage pid = runSqlite "package-sqlite.data" . fmap (packageSqliteName . fromJust) $ get pid
 
-    insert name deps _ = runSqlite "package-sqlite.data" $ do insertQuery name deps
-                                                              return PackageDatabaseSqlite
+    insert name inst deps _ = runSqlite "package-sqlite.data" $ do insertQuery name deps inst
+                                                                   return PackageDatabaseSqlite
     getDependency _ name = runSqlite "package-sqlite.data" $ dependenceQuery name
+
+    isInstalled _ name = runSqlite "package-sqlite.data" $ installedQuery name
 
 
 
 --Required queries
 
-insertQuery name deps
-   | deps == Nothing = insert_ $ PackageSqlite name True -- The resolution has failed do not add more packages
-   | otherwise = do pkgId <- insert $ PackageSqlite name False
+insertQuery name deps inst
+   | deps == Nothing = insert_ $ PackageSqlite name True inst -- The resolution has failed do not add more packages
+   | otherwise = do pkgId <- insert $ PackageSqlite name False inst
                     insertMany_ $ zipWith PackageDependence (repeat pkgId) (fromJust deps)
 
 dependenceQuery name = do package' <- getBy $ UniqueName name
@@ -80,5 +84,7 @@ dependenceQuery name = do package' <- getBy $ UniqueName name
                                             return . Prelude.map (packageDependenceDependant . entityVal) $ dependencies
           resolutionFailed = packageSqliteResolutionFailed . entityVal
 
-
-
+installedQuery name = do package' <- getBy $ UniqueName name
+                         case package' of 
+                             Nothing -> return Nothing -- Could not find the package returning nothing
+                             Just package -> return . Just . packageSqliteInstalled $ entityVal package -- Return installed status.

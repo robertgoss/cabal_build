@@ -20,7 +20,8 @@ type PackageDependencies = Maybe [PackageName] -- Wrapped in a maybe to indicate
 
 data Package = Package { name :: String,
                          version :: [Int],
-                         dependencies :: PackageDependencies
+                         dependencies :: PackageDependencies,
+                         installed :: Bool -- Bool to see if this package is already installed.
                        } deriving(Show)
 
 --Properties of package
@@ -49,7 +50,8 @@ differentVersions  pkg pName = name pkg == name2
 class PackageDatabase a where
   emptyDatabase :: IO a
   packageNameSource :: a -> IO (Source IO PackageName)
-  insert :: PackageName -> PackageDependencies -> a -> IO a
+  insert :: PackageName -> Bool -> PackageDependencies -> a -> IO a -- Bool indicating if package is installed.
+  isInstalled :: a -> PackageName -> IO (Maybe Bool)
   getDependency :: a -> PackageName -> IO (Maybe PackageDependencies)
 
 --Convert data between backends
@@ -61,7 +63,8 @@ convertBackend database = do empty <- emptyDatabase
                                    pkg <- getPackage database name
                                    let pName = packageName pkg
                                        deps = dependencies pkg
-                                   insert pName deps db
+                                       inst = installed pkg
+                                   insert pName inst deps db
 
 
 --Basic constructors of the full package database - either from a file or directly computed from system.
@@ -90,22 +93,30 @@ fromSystem = do System.cleanCabalSystem -- Clean system so there are no local pa
 
 --  Add package to the database
 addPackage :: (PackageDatabase db) => Package -> db -> IO db
-addPackage package database = insert name pDependencies database
+addPackage package database = insert name pInstalled pDependencies database
     where name = packageName package
           pDependencies = dependencies package
+          pInstalled = installed package
 
 --  Construct a package from it's name by querying the system
 packageFromSystem :: PackageName -> IO Package
-packageFromSystem package = do packageDependencies <- packageDependenciesFromSystem package
+packageFromSystem package = do (installed, packageDependencies) <- packageDependenciesFromSystem package
                                return Package { name = packageName ,
                                                 version = packageVersion,
-                                                dependencies = packageDependencies
+                                                dependencies = packageDependencies,
+                                                installed = installed
                                               } 
     where (packageName, packageVersion) = splitPackageName package
-
+ 
 --  Get the dependencies for a given package by querying the system
-packageDependenciesFromSystem :: PackageName -> IO PackageDependencies 
-packageDependenciesFromSystem = System.dependencies
+-- Also returns if the package is installed
+  --Convert the either returned by system into if the package has been installed and a maybe on dependencies
+packageDependenciesFromSystem :: PackageName -> IO (Bool,PackageDependencies) 
+packageDependenciesFromSystem name = do depEither <- System.dependencies name
+                                        return $ case depEither of
+                                                    Right deps -> (False, Just deps)
+                                                    Left System.ResolutionFail -> (False, Nothing)
+                                                    Left System.PackageInstalled -> (True, Nothing)
 
 --  Get the list of all availible packages from the system
 packageListFromSystem :: IO [PackageName]
@@ -130,8 +141,10 @@ packageList database = do pkgSource <- packageSource database
 -- Is assumed to be in database
 getPackage :: (PackageDatabase db) => db -> PackageName -> IO Package
 getPackage database name = do packageDependencies <- fmap fromJust $ getDependency database name
+                              installed <- fmap fromJust $ isInstalled database name
                               let (packageName, packageVersion) = splitPackageName name
                               return $ Package { name = packageName,
                                                  version = packageVersion,
-                                                 dependencies = packageDependencies
+                                                 dependencies = packageDependencies,
+                                                 installed = installed
                                                }
