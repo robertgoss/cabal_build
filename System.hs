@@ -28,6 +28,7 @@ packageListSh = liftM processOutput $ run "cabal" ["list","--simple"]
 data DepError = ResolutionFail
                 | PackageInstalled
                 | ReinstallsNeeded
+                deriving(Eq,Show)
 --Given the current package-name find the dependent packages that would need
 -- to be installed. This is wrapped in a either to detect a failure in resolution or if
 -- the package is already installed.
@@ -41,8 +42,9 @@ dependencies = shelly . silently . liftM (fmap (map T.unpack)) . dependenciesSh
 dependenciesSh :: String -> Sh (Either DepError [T.Text])
 dependenciesSh name = errExit False $ do depText <- run "cabal" ["install", package , "--dry-run"]
                                          exitCode <- lastExitCode
+                                         stdErr <- lastStderr
                                          let installed = isInstalled depText
-                                             reinstalls = needReinstalled depText
+                                             reinstalls = needReinstalled stdErr -- Reinstalls error is prnted to stderr!
                                          --Package has a resolution failed and cant be installed 
                                          -- If the dry-run failes or if it is already installed.
                                          if (exitCode == 0) then
