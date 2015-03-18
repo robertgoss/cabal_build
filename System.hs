@@ -69,7 +69,9 @@ dependenciesSh name = errExit False $ do depText <- run "cabal" ["install", pack
           --See if reinstalls of (system) packages are needed
           -- For now we will treat this as a plain build failure 
           -- Check last line for given text.
-          needReinstalled output = last (T.lines output) == "Use --force-reinstalls if you want to install anyway."
+          needReinstalled output 
+             | T.null output = False -- guard against empty sterr
+             | otherwise = last (T.lines output) == "Use --force-reinstalls if you want to install anyway."
 
 --Build the current list of packages return the success or failure of the build.
 build :: [String] -> IO Bool
