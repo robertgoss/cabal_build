@@ -1,4 +1,8 @@
-~.o
-~.hi
+*.o
+*.hi
+*.p_hi
+*.p_o
+*.dyn_o
+*.dyn_hi
 Main*
 .gitignore
