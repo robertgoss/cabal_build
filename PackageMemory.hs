@@ -8,14 +8,13 @@ import Package
 import qualified Data.Conduit.List as CL
 
 --A package database held completely in memory
-newtype PackageDatabaseMemory = PackageDatabaseMemory (Map.Map PackageName (Bool,PackageDependencies))
+newtype PackageDatabaseMemory = PackageDatabaseMemory (Map.Map PackageName PackageDependencies)
 
 instance PackageDatabase PackageDatabaseMemory where
   emptyDatabase = return $ PackageDatabaseMemory Map.empty
   packageNameSource (PackageDatabaseMemory depMap) = return . CL.sourceList $ Map.keys depMap
-  insert name inst dep (PackageDatabaseMemory depMap) = return $ PackageDatabaseMemory $ Map.insert name (inst, dep) depMap
+  insert name dep (PackageDatabaseMemory depMap) = return $ PackageDatabaseMemory $ Map.insert name dep depMap
   getDependency (PackageDatabaseMemory depMap) name = return . fmap snd $ Map.lookup name depMap
-  isInstalled (PackageDatabaseMemory depMap) name = return . fmap fst $ Map.lookup name depMap
 
 
 --Load / Save database to a file
