@@ -22,7 +22,7 @@ type BuildId = Word64
 
 data BuildData = BuildData { 
                              package :: PackageName,
-                             packageDependencies :: Maybe [PackageName], --Maybe in dependencies indicates a resolution failure
+                             packageDependencies :: Maybe [PackageName], --Maybe represents a potential failure in resolution
                              buildDependencies :: Maybe [BuildId]
                            }
 
@@ -97,13 +97,13 @@ addPrimaryBuildData name packageDatabase buildDatabase = do package <- getPackag
     where addBasedOnDeps package = case dependencies package of --Add based on if there has been resolutin failure
                                        -- The primary build is just a non-primary build data in 
                                        -- the context given by it's dependencies
-                                       (Just deps) -> do context <- mapM (getPackage packageDatabase) deps
-                                                         addNonPrimaryBuildData context package buildDatabase
+                                       (Dependencies deps) -> do context <- mapM (getPackage packageDatabase) deps
+                                                                 addNonPrimaryBuildData context package buildDatabase
                                         --There has been a resolution failure. Add in the stub build
-                                       Nothing -> let stubData = BuildData name Nothing Nothing
-                                                      stubId = getId stubData
-                                                  in do databaseWithId <- addId stubId stubData buildDatabase
-                                                        return (stubId, databaseWithId)
+                                       otherwise -> let stubData = BuildData name Nothing Nothing
+                                                        stubId = getId stubData
+                                                    in do databaseWithId <- addId stubId stubData buildDatabase
+                                                          return (stubId, databaseWithId)
 
 
 
@@ -134,6 +134,7 @@ addNonPrimaryBuildData context package buildDatabase
         name = packageName package
         depIter (depIds,depDb) depPkg = do (depId,dbDep) <- addNonPrimaryBuildData context depPkg depDb
                                            return(depId:depIds, dbDep)
+
 
 
 
@@ -194,10 +195,16 @@ buildAll buildDatabase = do buildIds <- allIds buildDatabase
 --Helper functions for constructing a BuildData  
 --Filter out only those elements of the context which are dependencies of this package
 getDependenciesFromContext :: Context -> Package -> [Package]
-getDependenciesFromContext context package = filter (isDependant depends) $ context
+getDependenciesFromContext context package = trace (packageName package) $ filter (isDependant depends) $ context
           --A context package is dependent if it is a different version of a known dependency of this package
     where isDependant depends cPackage = any (differentVersions cPackage) depends
-          depends = fromJust . dependencies $ package
+          --As this dependency exists in some context it has a resolution so either it has been found in which case
+          -- We use that or it has not and we use the entire context without this package
+          -- This will definatly contain a resolution and will not cause a regress by recalling this package
+          depends = case dependencies package of
+                       Dependencies deps -> deps
+                       ResolutionUnknown -> map packageName $ filter (/=package) context
+
 
 
 
