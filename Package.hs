@@ -6,7 +6,7 @@ module Package(PackageName, PackageDependencies(..), Package(..), PackageDatabas
               ) where
 
 import qualified System
-import Data.List(intersperse)
+import Data.List(intersperse,sort)
 import Data.List.Split(splitOn)
 import Text.Format(format)
 import Control.Monad(forM, foldM)
@@ -28,10 +28,17 @@ data PackageDependencies =  NotResolved -- The resolution failed and this packag
                                                              -- Exclude the package itself from the list of dependencies.
                         deriving(Show)
 
+instance Eq PackageDependencies where
+  NotResolved == NotResolved = True
+  ResolutionUnknown == ResolutionUnknown = True
+  Installed == Installed = True
+  (Dependencies dep1) == (Dependencies dep2) = (sort dep1) == (sort dep2) -- Ordering of dpeendencies does not matter
+  _ == _ = False
+
 data Package = Package { name :: String,
                          version :: [Int],
                          dependencies :: PackageDependencies
-                       } deriving(Show)
+                       } deriving(Show,Eq)
 
 --Properties of package
 --Get the full package nae of a package. This is in the form name-version. This will
