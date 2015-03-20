@@ -28,6 +28,7 @@ packageListSh = liftM processOutput $ run "cabal" ["list","--simple"]
 data DepError = ResolutionFail
                 | PackageInstalled
                 | ReinstallsNeeded
+                | OverBackjump
                 deriving(Eq,Show)
 --Given the current package-name find the dependent packages that would need
 -- to be installed. This is wrapped in a either to detect a failure in resolution or if
@@ -45,6 +46,7 @@ dependenciesSh name = errExit False $ do depText <- run "cabal" ["install", pack
                                          stdErr <- lastStderr
                                          let installed = isInstalled depText
                                              reinstalls = needReinstalled stdErr -- Reinstalls error is prnted to stderr!
+                                             backjump = overBackjump stdErr -- Overjump err is printed to stderr
                                          --Package has a resolution failed and cant be installed 
                                          -- If the dry-run failes or if it is already installed.
                                          if (exitCode == 0) then
@@ -53,7 +55,10 @@ dependenciesSh name = errExit False $ do depText <- run "cabal" ["install", pack
                                                           then return . Right $ processOutput depText
                                                           else return $ Left ReinstallsNeeded
                                          	      else return $ Left PackageInstalled
-                                             else return $ Left ResolutionFail
+                                             else --See if resolution failed as this packag cant be resolved or if system 
+                                                  -- Couldnt find one given resouces
+                                                  if backjump then return $ Left OverBackjump
+                                                  else return $ Left ResolutionFail
     where package = T.pack name
           --Process the output of the dry run into the dependencies
           --Split into lines, drop the first 2 lines which are boilerplate
@@ -72,6 +77,11 @@ dependenciesSh name = errExit False $ do depText <- run "cabal" ["install", pack
           needReinstalled output 
              | T.null output = False -- guard against empty sterr
              | otherwise = last (T.lines output) == "Use --force-reinstalls if you want to install anyway."
+          --See if we failed to find a resolution as we used up the quota of backjumps
+          --Check last line for given text
+          overBackjump stderr
+             | T.null stderr = False -- guard against empty sterr
+             | otherwise = last (T.lines stderr) == "Backjump limit reached (change with --max-backjumps)." 
 
 --Build the current list of packages return the success or failure of the build.
 build :: [String] -> IO Bool

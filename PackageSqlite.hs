@@ -28,6 +28,8 @@ share [mkPersist sqlSettings, mkMigrate "migrateAll"] [persistLowerCase|
 PackageSqlite
     name Package.PackageName -- Allow pulling name list out of database without reconstructing dependencies
     resolutionFailed Bool -- If the resolution failed
+    backjumpReached Bool -- If the backjump limit was reached during resolution
+                         -- This may mean with more resources a resolution can be found.
     installed Bool --If this package is installed on the system
     UniqueName name
     deriving Show 
@@ -59,32 +61,38 @@ instance Package.PackageDatabase PackageDatabaseSqlite where
                              return $ CL.sourceList ids $= CL.mapM getPackage
           where getPackage pid = runSqlite "package-sqlite.data" . fmap (packageSqliteName . fromJust) $ get pid
 
-    insert name inst deps _ = runSqlite "package-sqlite.data" $ do insertQuery name deps inst
-                                                                   return PackageDatabaseSqlite
+    insert name deps _ = runSqlite "package-sqlite.data" $ do insertQuery name deps
+                                                              return PackageDatabaseSqlite
     getDependency _ name = runSqlite "package-sqlite.data" $ dependenceQuery name
 
-    isInstalled _ name = runSqlite "package-sqlite.data" $ installedQuery name
 
 
 
 --Required queries
 
-insertQuery name deps inst
-   | deps == Nothing = insert_ $ PackageSqlite name True inst -- The resolution has failed do not add more packages
-   | otherwise = do pkgId <- insert $ PackageSqlite name False inst
-                    insertMany_ $ zipWith PackageDependence (repeat pkgId) (fromJust deps)
+--Insert based on type of dependence
+insertQuery name Package.NotResolved = insert_ $ PackageSqlite name True False False 
+insertQuery name Package.ResolutionUnknown = insert_ $ PackageSqlite name True False True
+insertQuery name Package.Installed = insert_ $ PackageSqlite name True True False 
+--Resolution succeded so also add dependence relations.
+insertQuery name (Package.Dependencies deps) = do pkgId <- insert $ PackageSqlite name False False False
+                                                  insertMany_ $ zipWith PackageDependence (repeat pkgId) deps
 
 dependenceQuery name = do package' <- getBy $ UniqueName name
                           case package' of 
                             Nothing -> return Nothing -- Could not find the package returning nothing
-                            Just package -> if resolutionFailed package then return $ Just Nothing -- Package found but resolution failed
-                                            else fmap (Just . Just) $ getDependenceQuery $ entityKey package --Perform the query to get dependencies
-
+                            Just package -> if not (resolutionFailed package) -- Resolution succeded return dependencies 
+                                                                              -- Get dependencies with query then wrap
+                                                then do deps <- getDependenceQuery $ entityKey package 
+                                                        return . Just . Package.Dependencies $ deps
+                                                else -- Resolution failedfind out why and return answer
+                                                     --Chek through other resound that resolution may have failed
+                                                     if installed package then return $ Just Package.Installed
+                                                                          else if backjump package then return $ Just Package.ResolutionUnknown
+                                                                                                   else return $ Just Package.NotResolved 
     where getDependenceQuery packageId = do dependencies <- selectList [PackageDependencePackage ==. packageId] []
                                             return . Prelude.map (packageDependenceDependant . entityVal) $ dependencies
           resolutionFailed = packageSqliteResolutionFailed . entityVal
+          installed = packageSqliteInstalled . entityVal
+          backjump = packageSqliteBackjumpReached . entityVal
 
-installedQuery name = do package' <- getBy $ UniqueName name
-                         case package' of 
-                             Nothing -> return Nothing -- Could not find the package returning nothing
-                             Just package -> return . Just . packageSqliteInstalled $ entityVal package -- Return installed status.

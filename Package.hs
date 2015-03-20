@@ -1,4 +1,4 @@
-module Package(PackageName, PackageDependencies, Package(..), PackageDatabase(..),
+module Package(PackageName, PackageDependencies(..), Package(..), PackageDatabase(..),
                packageName,differentVersions,splitPackageName,
                fromSystem,
                convertBackend,
@@ -16,12 +16,21 @@ import Data.Conduit
 import qualified Data.Conduit.List as CL
 
 type PackageName = String
-type PackageDependencies = Maybe [PackageName] -- Wrapped in a maybe to indicate if dependencies could not be resolved.
+data PackageDependencies =  NotResolved -- The resolution failed and this package cannt be installed on the system
+                                        -- Further no package can depend on this one
+                                        -- As such it also cannot have dependencies
+                            | ResolutionUnknown -- The system wasn't able to determine a resolution for this package
+                                                -- One may exist so this package could be a dependant of another
+                                                -- As such we cant have dependencies associated to it (yet)
+                            | Installed -- This package is installed it has no dependencies as it is functioning
+                                        -- As it is installed it's dependencies dont even include itself. 
+                            | Dependencies [PackageName] -- Package resolves to have the given list of dependencies
+                                                             -- Exclude the package itself from the list of dependencies.
+                        deriving(Show)
 
 data Package = Package { name :: String,
                          version :: [Int],
-                         dependencies :: PackageDependencies,
-                         installed :: Bool -- Bool to see if this package is already installed.
+                         dependencies :: PackageDependencies
                        } deriving(Show)
 
 --Properties of package
@@ -50,8 +59,7 @@ differentVersions  pkg pName = name pkg == name2
 class PackageDatabase a where
   emptyDatabase :: IO a
   packageNameSource :: a -> IO (Source IO PackageName)
-  insert :: PackageName -> Bool -> PackageDependencies -> a -> IO a -- Bool indicating if package is installed.
-  isInstalled :: a -> PackageName -> IO (Maybe Bool)
+  insert :: PackageName -> PackageDependencies -> a -> IO a -- Bool indicating if package is installed.
   getDependency :: a -> PackageName -> IO (Maybe PackageDependencies)
 
 --Convert data between backends
@@ -63,8 +71,7 @@ convertBackend database = do empty <- emptyDatabase
                                    pkg <- getPackage database name
                                    let pName = packageName pkg
                                        deps = dependencies pkg
-                                       inst = installed pkg
-                                   insert pName inst deps db
+                                   insert pName deps db
 
 
 --Basic constructors of the full package database - either from a file or directly computed from system.
@@ -93,33 +100,37 @@ fromSystem = do System.cleanCabalSystem -- Clean system so there are no local pa
 
 --  Add package to the database
 addPackage :: (PackageDatabase db) => Package -> db -> IO db
-addPackage package database = insert name pInstalled pDependencies database
+addPackage package database = insert name pDependencies database
     where name = packageName package
           pDependencies = dependencies package
-          pInstalled = installed package
 
 --  Construct a package from it's name by querying the system
 packageFromSystem :: PackageName -> IO Package
-packageFromSystem package = do (installed, packageDependencies) <- packageDependenciesFromSystem package
+packageFromSystem package = do packageDependencies <- packageDependenciesFromSystem package
                                return Package { name = packageName ,
                                                 version = packageVersion,
-                                                dependencies = packageDependencies,
-                                                installed = installed
+                                                dependencies = packageDependencies
                                               } 
     where (packageName, packageVersion) = splitPackageName package
  
 --  Get the dependencies for a given package by querying the system
 -- Also returns if the package is installed
   --Convert the either returned by system into if the package has been installed and a maybe on dependencies
-packageDependenciesFromSystem :: PackageName -> IO (Bool,PackageDependencies) 
+packageDependenciesFromSystem :: PackageName -> IO PackageDependencies
 packageDependenciesFromSystem name = do depEither <- System.dependencies name
                                         return $ case depEither of
                                                     --Full success
-                                                    Right deps -> (False, Just deps)
-                                                    Left System.ReinstallsNeeded -> (False,Nothing) 
+                                                    Right deps -> Dependencies deps
+                                                    -- The package cant be resolved on the system
                                                     -- Treat reinstalls as a resolution failure
-                                                    Left System.ResolutionFail -> (False, Nothing)
-                                                    Left System.PackageInstalled -> (True, Nothing)
+                                                    Left System.ResolutionFail ->NotResolved
+                                                    Left System.ReinstallsNeeded -> NotResolved
+                                                    --The package is installed on the system
+                                                    Left System.PackageInstalled -> Installed
+                                                    --The system failed to resolve this package
+                                                    --Due to a timeout / resources 
+                                                    -- With further resources a resolution may be found
+                                                    Left System.OverBackjump -> ResolutionUnknown
 
 --  Get the list of all availible packages from the system
 packageListFromSystem :: IO [PackageName]
@@ -143,11 +154,9 @@ packageList database = do pkgSource <- packageSource database
 --Get package from the database from it's package name
 -- Is assumed to be in database
 getPackage :: (PackageDatabase db) => db -> PackageName -> IO Package
-getPackage database name = do packageDependencies <- fmap fromJust $ getDependency database name
-                              installed <- fmap fromJust $ isInstalled database name
+getPackage database name = do packageDependencies <- getDependency database name
                               let (packageName, packageVersion) = splitPackageName name
                               return $ Package { name = packageName,
                                                  version = packageVersion,
-                                                 dependencies = packageDependencies,
-                                                 installed = installed
+                                                 dependencies = fromJust packageDependencies
                                                }
