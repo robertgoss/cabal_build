@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ExtendedDefaultRules #-}
 {-# OPTIONS_GHC -fno-warn-type-defaults #-}
-module System(packageList,dependencies,build,
+module System(packageList,dependencies,fetch,build,
 	           cleanCabalSystem,
              DepError(..)) where
 
@@ -82,6 +82,18 @@ dependenciesSh name = errExit False $ do depText <- run "cabal" ["install", pack
           overBackjump stderr
              | T.null stderr = False -- guard against empty sterr
              | otherwise = last (T.lines stderr) == "Backjump limit reached (change with --max-backjumps)." 
+
+--Perform a fetch of the given package
+fetch :: String -> IO Bool
+fetch = shelly . silently . errExit False . fetchSh -- Use exitErr as we will be checking lastExitCode rather than for an exception.
+
+--Call the command and check its success
+fetchSh :: String -> Sh Bool
+fetchSh name = do run_ "cabal" ["fetch","--no-dependencies",T.pack name]
+                  success <- lastExitCode
+                  return $ success == 0
+
+
 
 --Build the current list of packages return the success or failure of the build.
 build :: [String] -> IO Bool
