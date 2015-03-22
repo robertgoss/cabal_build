@@ -1,5 +1,6 @@
 module Build(BuildDatabase(..),BuildData(..),BuildResult(..),BuildId,
-             addAllPrimaryBuildData,addPrimaryBuildData) where
+             addAllPrimaryBuildData,addPrimaryBuildData,
+             addLatestPrimaryBuildData) where
 
 import Package
 import BuildResult
@@ -85,6 +86,15 @@ addAllPrimaryBuildData packageDatabase buildDatabase = do nameSource <- packageN
     where addPrimaryIter currBuildDatabase currPackage = do putStrLn currPackage
                                                             addPrimaryBuildData currPackage packageDatabase currBuildDatabase
 
+--Add the buildData for all latest the packages in the packageDatabase as primary builds to the 
+-- build database use a fold to update the database over the packagelist
+-- Perform fold in conduit to reduce amount loaded into memory
+addLatestPrimaryBuildData :: (PackageDatabase db, BuildDatabase buildDb) => db -> buildDb -> IO buildDb
+addLatestPrimaryBuildData packageDatabase buildDatabase = do packageSource <- latestPackageNameSource packageDatabase
+                                                             packageSource $$ CL.foldM addPrimaryIter buildDatabase -- Fuse together source and fold
+    where addPrimaryIter currBuildDatabase currPackage = do putStrLn currPackage
+                                                            addPrimaryBuildData currPackage packageDatabase currBuildDatabase
+
 
 --Add the buildData of the following primary build and it's dependencies to the database
 --  We also add buildId of this build to the primaryMap
@@ -132,7 +142,7 @@ addNonPrimaryBuildData context package buildDatabase
   where depends = getDependenciesFromContext context package
         buildId = getIdFromPackages name . map packageName $ depends
         name = packageName package
-        depIter (depIds,depDb) depPkg = do (depId,dbDep) <- addNonPrimaryBuildData context depPkg depDb
+        depIter (depIds,depDb) depPkg = do (depId,dbDep) <- addNonPrimaryBuildData depends depPkg depDb
                                            return(depId:depIds, dbDep)
 
 
@@ -195,7 +205,7 @@ buildAll buildDatabase = do buildIds <- allIds buildDatabase
 --Helper functions for constructing a BuildData  
 --Filter out only those elements of the context which are dependencies of this package
 getDependenciesFromContext :: Context -> Package -> [Package]
-getDependenciesFromContext context package = trace (packageName package) $ filter (isDependant depends) $ context
+getDependenciesFromContext context package = filter (isDependant depends) $ context
           --A context package is dependent if it is a different version of a known dependency of this package
     where isDependant depends cPackage = any (differentVersions cPackage) depends
           --As this dependency exists in some context it has a resolution so either it has been found in which case

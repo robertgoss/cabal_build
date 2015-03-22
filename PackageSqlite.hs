@@ -37,6 +37,10 @@ PackageDependence
     package PackageSqliteId
     dependant Package.PackageName
     deriving Show
+Latest -- A map of the latest version of a package
+    name String -- The name of package without version
+    latest PackageSqliteId -- Assosiated latest package
+    UniqueLatestName name
 |]
 
 
@@ -65,6 +69,18 @@ instance Package.PackageDatabase PackageDatabaseSqlite where
                                                               return PackageDatabaseSqlite
     getDependency _ name = runSqlite "package-sqlite.data" $ dependenceQuery name
 
+    latest _ name = runSqlite "package-sqlite.data" $ latestQuery name
+
+    makeLatest name _ = runSqlite "package-sqlite.data" $ do makeLatestQuery name
+                                                             return PackageDatabaseSqlite
+
+    --Get a source of package names
+    -- Source means they dont all need to be loaded into memory - only id's need to be in memory
+    latestPackageNameSource _ = do ids <- runSqlite "package-sqlite.data" $ selectSource [] [] $= CL.map getId $$ CL.consume
+                                   return $ CL.sourceList ids $= CL.mapM getPackage
+          where getPackage pid = runSqlite "package-sqlite.data" . fmap (packageSqliteName . fromJust) $ get pid
+                getId = latestLatest . entityVal
+
 
 
 
@@ -72,8 +88,8 @@ instance Package.PackageDatabase PackageDatabaseSqlite where
 
 --Insert based on type of dependence
 insertQuery name Package.NotResolved = insert_ $ PackageSqlite name True False False 
-insertQuery name Package.ResolutionUnknown = insert_ $ PackageSqlite name True False True
-insertQuery name Package.Installed = insert_ $ PackageSqlite name True True False 
+insertQuery name Package.ResolutionUnknown = insert_ $ PackageSqlite name True True False
+insertQuery name Package.Installed = insert_ $ PackageSqlite name True False True
 --Resolution succeded so also add dependence relations.
 insertQuery name (Package.Dependencies deps) = do pkgId <- insert $ PackageSqlite name False False False
                                                   insertMany_ $ zipWith PackageDependence (repeat pkgId) deps
@@ -96,3 +112,15 @@ dependenceQuery name = do package' <- getBy $ UniqueName name
           installed = packageSqliteInstalled . entityVal
           backjump = packageSqliteBackjumpReached . entityVal
 
+latestQuery name = do latest' <- getBy $ UniqueLatestName name
+                      case latest' of
+                          Nothing -> return Nothing
+                          (Just latest) -> do package <- get . latestLatest $ entityVal latest
+                                              return . Just . packageSqliteName . fromJust $ package
+
+makeLatestQuery packageName = do package' <- getBy $ UniqueName packageName
+                                 case package' of
+                                      Nothing -> return ()
+                                      Just package -> do deleteBy $ UniqueLatestName name -- Remove any old latest record
+                                                         insert_ $ Latest name (entityKey package) -- Insert new record with current latest version.
+    where name = fst $ Package.splitPackageName packageName

@@ -2,7 +2,10 @@ module Package(PackageName, PackageDependencies(..), Package(..), PackageDatabas
                packageName,differentVersions,splitPackageName,
                fromSystem,
                convertBackend,
-               packageList, getPackage,
+               packageLatestList, packageLatestSource,
+               packageList, packageSource,
+               getPackage,
+               updateLatest
               ) where
 
 import qualified System
@@ -14,6 +17,8 @@ import Data.Maybe(fromJust)
 
 import Data.Conduit
 import qualified Data.Conduit.List as CL
+
+import Debug.Trace(trace)
 
 type PackageName = String
 data PackageDependencies =  NotResolved -- The resolution failed and this package cannt be installed on the system
@@ -68,17 +73,37 @@ class PackageDatabase a where
   packageNameSource :: a -> IO (Source IO PackageName)
   insert :: PackageName -> PackageDependencies -> a -> IO a -- Bool indicating if package is installed.
   getDependency :: a -> PackageName -> IO (Maybe PackageDependencies)
+  makeLatest :: PackageName -> a -> IO a
+  latest :: a -> String -> IO (Maybe PackageName)
+  latestPackageNameSource :: a -> IO (Source IO PackageName)
 
 --Convert data between backends
 convertBackend :: (PackageDatabase a, PackageDatabase b) => a -> IO b
 convertBackend database = do empty <- emptyDatabase
                              nameSource <- packageNameSource database
-                             nameSource $$ CL.foldM movePackage empty -- Fold over the source of names
+                             db' <- nameSource $$ CL.foldM movePackage empty -- Fold over the source of names
+                             --Fold over the list of latet packages
+                             latestNameSource <- latestPackageNameSource db'
+                             latestNameSource $$ CL.foldM (flip makeLatest) db' -- Flip arguments
     where movePackage db name = do putStrLn name -- Adding a trace
                                    pkg <- getPackage database name
                                    let pName = packageName pkg
                                        deps = dependencies pkg
                                    insert pName deps db
+
+updateLatest :: (PackageDatabase db) => db -> IO db
+updateLatest database = do nameSource <- packageNameSource database
+                           nameSource $$ CL.foldM updatePackageLatest database --Fold over each package to update the database
+  where updatePackageLatest db packageName = do putStrLn packageName
+                                                latest' <- latest db $ name packageName
+                                                case latest' of
+                                                   Nothing -> makeLatest packageName db -- If this name has no latest yet then add this
+                                                   (Just latestName) -> if version packageName > version latestName 
+                                                                                then makeLatest packageName db -- This package is later add it as latest
+                                                                                else return db -- Current package is latest version
+
+            where name = fst . splitPackageName
+                  version = snd . splitPackageName
 
 
 --Basic constructors of the full package database - either from a file or directly computed from system.
@@ -99,7 +124,8 @@ fromSystem = do System.cleanCabalSystem -- Clean system so there are no local pa
                 foldM (getAndAddPackage totalPackages) empty $ zip indices packageNames                                          
   where getAndAddPackage total db (index, name) = do putStrLn $ format "{0}/{1} - {2}" [show index, total, name] --Trace a line.
                                                      package <- packageFromSystem name -- Get the packae information from the system.
-                                                     addPackage package db -- Add package to the database and return the new database.
+                                                     db' <- addPackage package db -- Add package to the database and return the new database.
+                                                     makeLatest name db' --Packages appear in version order in the system list.
         indices = [1..] :: [Int]
 
 
@@ -157,6 +183,20 @@ packageSource database = do nameSource <- packageNameSource database
 packageList :: (PackageDatabase db) => db -> IO [Package]
 packageList database = do pkgSource <- packageSource database
                           pkgSource $$ CL.consume
+
+--A source of the availible packages much more memory friendly (hopefully than packageList)
+-- Only returns the latest versions of any package
+packageLatestSource :: (PackageDatabase db) => db -> IO (Source IO Package)
+packageLatestSource database = do nameSource <- latestPackageNameSource database
+                                  return $ nameSource $= CL.mapM (getPackage database)
+
+
+--The list of available packages
+-- Only returns the latest versions of any package
+-- As creates all the packages is dangerous in memory!!!
+packageLatestList :: (PackageDatabase db) => db -> IO [Package]
+packageLatestList database = do pkgSource <- packageLatestSource database
+                                pkgSource $$ CL.consume
 
 --Get package from the database from it's package name
 -- Is assumed to be in database
