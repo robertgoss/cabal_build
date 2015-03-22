@@ -8,7 +8,8 @@
 {-# LANGUAGE TemplateHaskell            #-}
 {-# LANGUAGE TypeFamilies               #-}
 
-module BuildSqlite(BuildDatabaseSqlite) where
+module BuildSqlite(BuildDatabaseSqlite,
+                   loadBuildDatabase) where
 
 import Database.Persist
 import Database.Persist.TH
@@ -59,9 +60,9 @@ PackageDependance -- Expresses relation of a build being dependant on a package.
 data BuildDatabaseSqlite = BuildDatabaseSqlite
 
 --Make sure migrations are run in load
---loadBuildDatabase :: IO BuildDatabaseSqlite
---loadBuildDatabase = do runSqlite "build-sqlite.data" $ runMigration migrateAll
---                       return BuildDatabaseSqlite
+loadBuildDatabase :: IO BuildDatabaseSqlite
+loadBuildDatabase = do runSqlite "build-sqlite.data" $ runMigration migrateAll
+                       return BuildDatabaseSqlite
 
 
 instance Build.BuildDatabase BuildDatabaseSqlite where

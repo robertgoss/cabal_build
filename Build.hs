@@ -1,6 +1,8 @@
 module Build(BuildDatabase(..),BuildData(..),BuildResult(..),BuildId,
              addAllPrimaryBuildData,addPrimaryBuildData,
-             addLatestPrimaryBuildData) where
+             addLatestPrimaryBuildData,
+             build,
+             buildAll) where
 
 import Package
 import BuildResult
