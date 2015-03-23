@@ -197,9 +197,9 @@ build' buildId database result bData | result /= NotBuilt = return database
                                      | otherwise = do dependentBuildDatabase <- buildList dependenceIds database
                                                       depResults <- mapM (getResult dependentBuildDatabase) dependenceIds
                                                       if all (==BuildSuccess) depResults then 
-                                                         addResult buildId DependentFailure database
+                                                         buildOnSystem
                                                       else 
-                                                          buildOnSystem
+                                                         addResult buildId DependentFailure database
 
     where --The Ids of the depenendences use from just as have guarded aganinst resolution failure
           dependenceIds = fromJust $ buildDependencies bData
