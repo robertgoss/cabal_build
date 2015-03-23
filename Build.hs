@@ -10,7 +10,7 @@ import BuildResult
 import qualified System
 
 import Data.Hash
-import Data.Maybe(fromJust,isNothing)
+import Data.Maybe(fromJust,isNothing,isJust)
 import Control.Monad(foldM)
 import Text.Format(format)
 import Data.List(sort,intersperse)
@@ -18,6 +18,8 @@ import Data.Word(Word64)
 
 import Data.Conduit
 import qualified Data.Conduit.List as CL
+
+import qualified Data.Text as T
 
 import Debug.Trace(trace)
 
@@ -166,7 +168,10 @@ fetchAll database = do ids <- allIds database
    fetchAll' (buildId:rest) index total = do buildData <- getData database buildId
                                              let packageName = package buildData
                                              putStrLn $ format "{0}/{1} - {2}" [show index, total, packageName] -- Add tracing
-                                             res <- System.fetch packageName
+                                             --Only fetch package if it can be built
+                                             res <- if isJust $ packageDependencies buildData 
+                                                           then System.fetch packageName
+                                                           else return True
                                              --If the result is negative stop and print error else continue.
                                              if res then fetchAll' rest (index+1) total
                                                     else putStrLn "Error - Fetch Failed!"
