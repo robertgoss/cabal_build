@@ -96,15 +96,17 @@ fetchSh name = do run_ "cabal" ["fetch","--no-dependencies",T.pack name]
 
 
 --Build the current list of packages return the success or failure of the build.
-build :: [String] -> IO Bool
+--The maybe wraps a failure with the error text from stderr
+build :: [String] -> IO (Maybe T.Text)
 build = shelly . silently . errExit False . buildSh -- Use exitErr as we will be checking lastExitCode rather than for an exception.
 
 --Perform the build and check for success - then clean the system bak to it's original pristeen setting
-buildSh :: [String] -> Sh Bool
+buildSh :: [String] -> Sh (Maybe T.Text)
 buildSh names = do run_ "cabal" $ "install" : packages
                    success <- lastExitCode
                    cleanCabalSystemSh --Make sure cleaning is always run
-                   return $ success == 0
+                   if success == 0 then return Nothing
+                                   else fmap Just $ lastStderr
     where packages = map T.pack names
 
 -- Internal commands to help manage the system state.

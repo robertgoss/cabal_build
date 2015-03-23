@@ -26,6 +26,8 @@ import qualified BuildResult
 
 import qualified Data.Set as Set
 
+import qualified Data.Text as T
+
 --Setup a datatype to store build data as persist objects
 -- Also store the results map, id map and primary map
 -- This may not be the best way but closly follows the in memory method

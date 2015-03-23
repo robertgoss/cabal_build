@@ -207,8 +207,11 @@ build' buildId database result bData | result /= NotBuilt = return database
           fullPackageList = package bData : fromJust (packageDependencies bData)
           --Build package on the system and return the result
           buildOnSystem = do buildStatus <- System.build fullPackageList
-                             if buildStatus then addResult buildId BuildSuccess database
-                                            else addResult buildId BuildFail database
+                             case buildStatus of
+                                --No errors build was successful
+                                Nothing -> addResult buildId BuildSuccess database
+                                --The std err of a failed build
+                                (Just errText) -> addResult buildId (BuildFail errText) database
 
 
 --Helper function build a list of build Ids as in build. But chain together the databases so the final
