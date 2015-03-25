@@ -1,14 +1,15 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ExtendedDefaultRules #-}
 {-# OPTIONS_GHC -fno-warn-type-defaults #-}
-module System(packageList,dependencies,fetch,build,
+module System(packageList,dependencies,fetch,build,register,
 	           cleanCabalSystem,
-             DepError(..)) where
+             DepError(..),BuildStatus(..)) where
 
 --Import of shelly library - it defaults to using Text instead of string
 --  This reduces coercion for literals by default to Text.
 import Shelly
 import Control.Monad(liftM)
+import Data.Word
 import qualified Data.Text as T
 default (T.Text)
 
@@ -94,20 +95,78 @@ fetchSh name = do run_ "cabal" ["fetch","--no-dependencies",T.pack name]
                   return $ success == 0
 
 
+--Unpack the build to it's own directory
+-- Give the package name and the hash to differentiate it from packages with different contexts
+unpack :: String -> Word64 -> IO ()
+unpack p h = shelly . silently $ unpackSh p h
 
---Build the current list of packages return the success or failure of the build.
---The maybe wraps a failure with the error text from stderr
-build :: [String] -> IO (Maybe T.Text)
-build = shelly . silently . errExit False . buildSh -- Use exitErr as we will be checking lastExitCode rather than for an exception.
+--Call the cabal command 
+-- The build is placed in the directory $HOME/.cabal-build/hash/
+unpackSh :: String -> Word64 -> Sh ()
+unpackSh packageName hash = do home_env <- get_env_text "HOME"
+                               let home_path = T.replace "/n" "" home_env -- Get file path for the home directory from 
+                                                                          -- Env variable. Remove the extra \n
+                                   build_path = home_path </> ".cabal-build" </> show hash -- The directory the build will go in
+                               mkdir_p $ build_path -- Create directory for build
+                               run_ "cabal" ["get", T.pack packageName, "-d" `T.append` toTextIgnore build_path]
+
+
+--Register a pre-existing, prebuilt package with the local package directory
+-- Give the package name and the hash to differentiate it from packages with different contexts
+-- The build is placed in the directory $HOME/.cabal-build/hash/
+register :: String -> Word64 -> IO ()
+register p h = shelly . silently $ registerSh p h
+
+
+registerSh :: String -> Word64 -> Sh ()
+registerSh packageName hash = do home_env <- get_env_text "HOME"
+                                 let home_path = T.replace "/n" "" home_env -- Get file path for the home directory from 
+                                                                            -- Env variable. Remove the extra \n
+                                     build_path = home_path </> ".cabal-build" </> show hash -- The directory the build will go in
+                                 cd $ build_path </> packageName --Execute the command in the build directory
+                                 run_ "cabal" ["register", "--inplace","--user"] -- Inplace means we do not need to copy to default dir
+                                                                                -- Must register to user else will silently fail.
+-- Data structure to show the result status of a build
+data BuildStatus = BuildSuccess
+                   | ConfigureError T.Text T.Text -- Configure error return the stdout and stderr
+                   | BuildError T.Text T.Text -- Build error return the stdout and stderr
+
+--Build the current package that has been previously unpacked
+-- Give the package name and the hash to differentiate it from packages with different contexts
+-- The build is placed in the directory $HOME/.cabal-build/hash/
+build :: String -> Word64 -> IO BuildStatus
+build p h = shelly . silently . errExit False $ buildSh p h 
+                             -- Use exitErr as we will be checking lastExitCode rather than for an exception.
 
 --Perform the build and check for success - then clean the system bak to it's original pristeen setting
-buildSh :: [String] -> Sh (Maybe T.Text)
-buildSh names = do run_ "cabal" $ "install" : packages
-                   success <- lastExitCode
-                   cleanCabalSystemSh --Make sure cleaning is always run
-                   if success == 0 then return Nothing
-                                   else fmap Just $ lastStderr
-    where packages = map T.pack names
+--It is assumed that all dependencies have been met.
+buildSh :: String -> Word64 -> Sh BuildStatus
+buildSh packageName hash = do home_env <- get_env_text "HOME"
+                              let home_path = T.replace "/n" "" home_env -- Get file path for the home directory from 
+                                                                         -- Env variable. Remove the extra \n
+                                  build_path = home_path </> ".cabal-build" </> show hash -- The directory the build will go in
+                              --Unpack the package
+                              unpackSh packageName hash
+                              cd $ build_path </> packageName --Execute the commands in the build directory
+                              --Configure package and get user data
+                              config_text <- run "cabal" ["configure", "--user"]
+                              config_failure <- fmap (/=0) $ lastExitCode
+                              config_error <- lastStderr
+                              --Build package
+                              build_text <- run "cabal" ["build"]
+                              build_failure <- fmap (/=0) $ lastExitCode
+                              build_error <- lastStderr
+                              -- Clean the general system back to pristine setting
+                              cleanCabalSystemSh
+                              --Return result based on failure
+                              if config_failure 
+                                  then return $ ConfigureError config_text config_error
+                                  else if build_failure then return $ BuildError build_text build_error
+                                                        else return BuildSuccess -- No failures happened.
+
+
+
+
 
 -- Internal commands to help manage the system state.
 
@@ -125,9 +184,11 @@ cleanCabalSystemSh = do home_env <- get_env_text "HOME"
                         let home_path = T.replace "/n" "" home_env -- Get file path for the home directory from 
                                                                    -- Env variable. Remove the extra \n
                         rm_rf $ home_path </> ".ghc"
+                        rm_f $ home_path </> "world"
                         rm_rf $ home_path </> ".cabal" </> "bin"
                         rm_rf $ home_path </> ".cabal" </> "lib"
                         rm_rf $ home_path </> ".cabal" </> "share"
+                        rm_rf $ home_path </> ".cabal" </> "logs"
                         mkdir $  home_path </> ".cabal" </> "bin"
                         mkdir $  home_path </> ".cabal" </> "lib"
                         mkdir $  home_path </> ".cabal" </> "share"

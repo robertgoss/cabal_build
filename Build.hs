@@ -203,16 +203,30 @@ build' buildId database result bData | result /= NotBuilt = return database
 
     where --The Ids of the depenendences use from just as have guarded aganinst resolution failure
           dependenceIds = fromJust $ buildDependencies bData
-          -- The full package list to build
-          fullPackageList = package bData : fromJust (packageDependencies bData)
+          dependencePkgs = fromJust $ packageDependencies bData
+          --Package name
+          packageName = package $ bData
           --Build package on the system and return the result
-          buildOnSystem = do buildStatus <- System.build fullPackageList
+          -- Register the (now built) dependencies then build package
+          buildOnSystem = do mapM_ (registerBuildOnSystem database)  dependenceIds
+                             buildStatus <- System.build packageName buildId
                              case buildStatus of
                                 --No errors build was successful
-                                Nothing -> addResult buildId BuildSuccess database
-                                --The std err of a failed build
-                                (Just errText) -> addResult buildId (BuildFail errText) database
+                                System.BuildSuccess -> addResult buildId BuildSuccess database
+                                --The std err and std out of a failed configure
+                                System.ConfigureError outText errText -> addResult buildId (ConfigFail outText errText) database
+                                --The std err and std out of a failed build
+                                System.BuildError outText errText -> addResult buildId (BuildFail outText errText) database
 
+
+--Registers a build with the system use the given packageName and differentiate it with the buildid
+registerBuildOnSystem :: (BuildDatabase db) => db ->  BuildId -> IO ()
+registerBuildOnSystem db buildId = do bData <- getData db buildId
+                                      let packageName = package $ bData
+                                          depIds = fromJust . buildDependencies $ bData -- as has been build deps exist
+                                      --Register depenencies first
+                                      mapM_ (registerBuildOnSystem db) depIds 
+                                      System.register packageName buildId
 
 --Helper function build a list of build Ids as in build. But chain together the databases so the final
 -- Database has the results of building all the packages. Use monadinc fold
