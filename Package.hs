@@ -70,11 +70,13 @@ differentVersions  pkg pName = name pkg == name2
 --An abstrction of the features of a package database used in memeory
 class PackageDatabase a where
   emptyDatabase :: IO a
+  --Returns packages in order from most dependencies to least
   packageNameSource :: a -> IO (Source IO PackageName)
   insert :: PackageName -> PackageDependencies -> a -> IO a -- Bool indicating if package is installed.
   getDependency :: a -> PackageName -> IO (Maybe PackageDependencies)
   makeLatest :: PackageName -> a -> IO a
   latest :: a -> String -> IO (Maybe PackageName)
+  --Returns in order from most dependenices to least
   latestPackageNameSource :: a -> IO (Source IO PackageName)
 
 --Convert data between backends

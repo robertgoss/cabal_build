@@ -14,17 +14,27 @@ module PackageDatabase(loadSqlitePackageDatabase, PackageDatabaseSqlite,
 import Database.Persist
 import Database.Persist.TH
 import Database.Persist.Sqlite
-import Database.Persist.Postgres
+import Database.Persist.Postgresql
 import Data.Conduit
 import qualified Data.Conduit.List as CL
 import Data.Maybe(fromJust)
 import Debug.Trace(trace)
+import Control.Monad.Trans.Resource(runResourceT,ResourceT)
+import Control.Monad.Logger(runNoLoggingT,NoLoggingT)
+import Control.Monad.IO.Class (MonadIO (..))
+import Control.Monad.Trans.Control (MonadBaseControl)
 
 import qualified Package 
 
 type VersionString = String
 
 --Setup a datatype to store packages as persist objects
+
+
+--Indexes 
+
+--persistent cannot create objects for speed should have them on PackageDependence Package
+--                                                                 PackageSqite Name
 
 share [mkPersist sqlSettings, mkMigrate "migrateAll"] [persistLowerCase|
 PackageSqlite
@@ -67,7 +77,7 @@ instance Package.PackageDatabase PackageDatabaseSqlite where
     --Get a source of package names
     -- Source means they dont all need to be loaded into memory - only id's need to be in memory
     -- This is done in order (least to most of dependenices)
-    packageNameSource _ = do ids <- runSqlite sqliteFile $ selectKeysList [] [Asc packageSqliteNDepends]
+    packageNameSource _ = do ids <- runSqlite sqliteFile $ selectKeysList [] [Asc PackageSqliteNDepends]
                              return $ CL.sourceList ids $= CL.mapM getPackage
           where getPackage pid = runSqlite sqliteFile . fmap (packageSqliteName . fromJust) $ get pid
 
@@ -82,9 +92,9 @@ instance Package.PackageDatabase PackageDatabaseSqlite where
 
     --Get a source of package names
     -- Source means they dont all need to be loaded into memory - only id's need to be in memory
-    latestPackageNameSource _ = do ids <- runSqlite "package-sqlite.data" $ selectSource [] [Asc packageSqliteNDepends] $= CL.map getId $$ CL.consume
+    latestPackageNameSource _ = do ids <- runSqlite sqliteFile $ selectSource [] [] $= CL.map getId $$ CL.consume
                                    return $ CL.sourceList ids $= CL.mapM getPackage
-          where getPackage pid = runSqlite "package-sqlite.data" . fmap (packageSqliteName . fromJust) $ get pid
+          where getPackage pid = runSqlite sqliteFile . fmap (packageSqliteName . fromJust) $ get pid
                 getId = latestLatest . entityVal
 
 
@@ -95,40 +105,51 @@ instance Package.PackageDatabase PackageDatabaseSqlite where
 --Postgressql
 data PackageDatabasePostgres = PackageDatabasePostgres 
 
+--Hardcoded connection string
 connectionString = "host=localhost user=cabal_build password=cabal dbname=cabal_build"
+
+--Helper function to run a postgres connection throws away loging
+-- Does nt preserve connection between queries
+runPostgres :: (MonadBaseControl IO m, MonadIO m)
+          => SqlPersistT (NoLoggingT (ResourceT m)) a -- ^ database action
+          -> m a
+runPostgres = runResourceT
+            . runNoLoggingT
+            . withPostgresqlConn connectionString
+            . runSqlConn
 
 --Mke sure migrations are run in load
 loadPostgresPackageDatabase :: IO PackageDatabasePostgres
-loadPostgresPackageDatabase = withPostgresConn connectionString $ do runMigration migrateAll
-                                                                     return PackageDatabasePostgres
+loadPostgresPackageDatabase = runPostgres $ do runMigration migrateAll
+                                               return PackageDatabasePostgres
 
 --Convert PackageDatabaseSqlite to be a packagedatabase
 -- Here we use a constant path to the database for now.
 instance Package.PackageDatabase PackageDatabasePostgres where
-    emptyDatabase = withPostgresConn connectionString $ do runMigration migrateAll
-                                                           return PackageDatabasePostgres
+    emptyDatabase = runPostgres $ do runMigration migrateAll
+                                     return PackageDatabasePostgres
 
     --Get a source of package names
     -- Source means they dont all need to be loaded into memory - only id's need to be in memory
     -- This is done in order (least to most of dependenices)
-    packageNameSource _ = do ids <- withPostgresConn connectionString $ selectKeysList [] [Asc packageSqliteNDepends]
+    packageNameSource _ = do ids <- runPostgres $ selectKeysList [] [Asc PackageSqliteNDepends]
                              return $ CL.sourceList ids $= CL.mapM getPackage
-          where getPackage pid = withPostgresConn connectionString . fmap (packageSqliteName . fromJust) $ get pid
+          where getPackage pid = runPostgres . fmap (packageSqliteName . fromJust) $ get pid
 
-    insert name deps _ = withPostgresConn connectionString $ do insertQuery name deps
-                                                                return PackageDatabasePostgres
-    getDependency _ name = withPostgresConn connectionString $ dependenceQuery name
+    insert name deps _ = runPostgres $ do insertQuery name deps
+                                          return PackageDatabasePostgres
+    getDependency _ name = runPostgres $ dependenceQuery name
 
-    latest _ name = withPostgresConn connectionString $ latestQuery name
+    latest _ name = runPostgres $ latestQuery name
 
-    makeLatest name _ = withPostgresConn connectionString $ do makeLatestQuery name
-                                                               return PackageDatabaseSqlite
+    makeLatest name _ = runPostgres $ do makeLatestQuery name
+                                         return PackageDatabasePostgres
 
     --Get a source of package names
     -- Source means they dont all need to be loaded into memory - only id's need to be in memory
-    latestPackageNameSource _ = do ids <- withPostgresConn connectionString $ selectSource [] [Asc packageSqliteNDepends] $= CL.map getId $$ CL.consume
+    latestPackageNameSource _ = do ids <- runPostgres $ selectSource [] [] $= CL.map getId $$ CL.consume
                                    return $ CL.sourceList ids $= CL.mapM getPackage
-          where getPackage pid = withPostgresConn connectionString . fmap (packageSqliteName . fromJust) $ get pid
+          where getPackage pid = runPostgres . fmap (packageSqliteName . fromJust) $ get pid
                 getId = latestLatest . entityVal
 
 
