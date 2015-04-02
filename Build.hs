@@ -1,7 +1,6 @@
 module Build(BuildDatabase(..),BuildData(..),BuildResult(..),BuildId,
              addAllPrimaryBuildData,addPrimaryBuildData,
              addLatestPrimaryBuildData,
-             fetchAll,
              build,
              buildAll) where
 
@@ -64,11 +63,9 @@ class BuildDatabase db where
   addId :: BuildId -> BuildData -> db -> IO db
   addResult :: BuildId -> BuildResult -> db -> IO db
   addPrimary :: PackageName -> BuildId -> db -> IO db
-  fetched :: BuildId -> db -> IO db
 
   getData :: db -> BuildId -> IO BuildData
   getResult :: db -> BuildId -> IO BuildResult
-  isFetched :: db -> BuildId -> IO Bool
   allIds :: db -> IO [BuildId]
 
 
@@ -154,29 +151,6 @@ addNonPrimaryBuildData context package buildDatabase
 
 
 
-
-
---Fetch the data for the all the packages to be built 
--- If a package should fail then quit logging error to stdout
--- So it can be restarted
-fetchAll :: (BuildDatabase db) => db -> IO ()
-fetchAll database = do ids <- allIds database
-                       let total = show $ length ids
-                       fetchAll' ids 0 total
-   --Allow for early closure
-   --Fetch the primary package of each build
-  where
-   fetchAll' [] _ _ = return ()
-   fetchAll' (buildId:rest) index total = do buildData <- getData database buildId
-                                             let packageName = package buildData
-                                             putStrLn $ format "{0}/{1} - {2}" [show index, total, packageName] -- Add tracing
-                                             --Only fetch package if it can be built
-                                             res <- if isJust $ packageDependencies buildData 
-                                                           then System.fetch packageName
-                                                           else return True
-                                             --If the result is negative stop and print error else continue.
-                                             if res then fetchAll' rest (index+1) total
-                                                    else putStrLn "Error - Fetch Failed!"
 
 --Takes gets the given buildId and build database and updates the database 
 -- With the build results of this build. If the build result is already know 

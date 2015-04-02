@@ -58,7 +58,6 @@ BuildData
 Result
     buildId Build.BuildId
     buildResult BuildResult.BuildResult
-    fetched Bool Default=FALSE -- Has this build been fetched - defaults to false.
     UniqueResultId buildId
     deriving Show
 Primary
@@ -101,14 +100,9 @@ instance Build.BuildDatabase BuildDatabaseSqlite where
     addPrimary package buildId db = runSqlite sqliteFile $ do addPrimaryQuery package buildId
                                                               return db
 
-    fetched buildId db = runSqlite sqliteFile $ do fetchedQuery buildId
-                                                   return db
-
     getData _ buildId = runSqlite sqliteFile $ getDataQuery buildId
 
     getResult _ buildId = runSqlite sqliteFile $ getResultQuery buildId
-
-    isFetched _ buildId = runSqlite sqliteFile $ isFetchedQuery buildId
 
     allIds _ = runSqlite sqliteFile $ allIdsQuery
 
@@ -148,14 +142,10 @@ instance Build.BuildDatabase BuildDatabasePostgres where
                                                         return db
     addPrimary package buildId db = runPostgres $ do addPrimaryQuery package buildId
                                                      return db
-    fetched buildId db = runPostgres $ do fetchedQuery buildId
-                                          return db
 
     getData _ buildId = runPostgres $ getDataQuery buildId
 
     getResult _ buildId = runPostgres $ getResultQuery buildId
-
-    isFetched _ buildId = runPostgres $ isFetchedQuery buildId
 
     allIds _ = runPostgres allIdsQuery
 
@@ -195,7 +185,7 @@ getDataQuery buildId = do entity <- fmap fromJust $ getBy $ UniqueId buildId
 addIdQuery buildId buildData = do buildSqliteId <- insertUnique buildDataSqlite
                                   case buildSqliteId of
                                     Nothing -> return () -- This id is already in database
-                                    (Just bid) -> do insertUnique $ Result buildId BuildResult.NotBuilt False
+                                    (Just bid) -> do insertUnique $ Result buildId BuildResult.NotBuilt
                                                      case buildDependencies' of
                                                        Nothing -> return () 
                                                        otherwise -> do insertMany_ . map (BuildDependance bid) $ deps -- If there are dependencies insert relations 
@@ -222,11 +212,3 @@ addPrimaryQuery package buildId = insert $ Primary package buildId
 
 --See just if this id exists in the database
 idExistsQuery buildId = fmap isJust . getBy $ UniqueId buildId
-
---Query to see if this build has been fetched
--- Assume that buld exists as we have the id
-isFetchedQuery buildId = fmap (resultFetched . entityVal . fromJust) $ getBy (UniqueResultId buildId)
-
---Query to set a build to fetched
-fetchedQuery buildId = do entity <- fmap fromJust $ getBy $ UniqueResultId buildId
-                          update (entityKey entity) [ResultFetched =. True]

@@ -44,6 +44,7 @@ PackageSqlite
                          -- This may mean with more resources a resolution can be found.
     installed Bool --If this package is installed on the system
     nDepends Int -- Cached result - number of dependences this package has.
+    fetched Bool -- If this package has been fetched on the system. Default that it hasn't.
     UniqueName name
     deriving Show 
 PackageDependence
@@ -89,6 +90,11 @@ instance Package.PackageDatabase PackageDatabaseSqlite where
 
     makeLatest name _ = runSqlite sqliteFile $ do makeLatestQuery name
                                                   return PackageDatabaseSqlite
+
+    fetched name _ = runSqlite sqliteFile $ do fetchedQuery name
+                                               return PackageDatabaseSqlite
+
+    isFetched _ name = runSqlite sqliteFile $ isFetchedQuery name
 
     --Get a source of package names
     -- Source means they dont all need to be loaded into memory - only id's need to be in memory
@@ -145,6 +151,11 @@ instance Package.PackageDatabase PackageDatabasePostgres where
     makeLatest name _ = runPostgres $ do makeLatestQuery name
                                          return PackageDatabasePostgres
 
+    fetched name _ = runPostgres $ do fetchedQuery name
+                                      return PackageDatabasePostgres
+
+    isFetched _ name = runPostgres $ isFetchedQuery name
+
     --Get a source of package names
     -- Source means they dont all need to be loaded into memory - only id's need to be in memory
     latestPackageNameSource _ = do ids <- runPostgres $ selectSource [] [] $= CL.map getId $$ CL.consume
@@ -158,11 +169,11 @@ instance Package.PackageDatabase PackageDatabasePostgres where
 --Required queries
 
 --Insert based on type of dependence
-insertQuery name Package.NotResolved = insert_ $ PackageSqlite name True False False 0 
-insertQuery name Package.ResolutionUnknown = insert_ $ PackageSqlite name True True False 0
-insertQuery name Package.Installed = insert_ $ PackageSqlite name True False True 0
+insertQuery name Package.NotResolved = insert_ $ PackageSqlite name True False False 0 False
+insertQuery name Package.ResolutionUnknown = insert_ $ PackageSqlite name True True False 0 False
+insertQuery name Package.Installed = insert_ $ PackageSqlite name True False True 0 False
 --Resolution succeded so also add dependence relations.
-insertQuery name (Package.Dependencies deps) = do pkgId <- insert $ PackageSqlite name False False False (length deps)
+insertQuery name (Package.Dependencies deps) = do pkgId <- insert $ PackageSqlite name False False False (length deps) False
                                                   insertMany_ $ zipWith PackageDependence (repeat pkgId) deps
 
 dependenceQuery name = do package' <- getBy $ UniqueName name
@@ -195,3 +206,12 @@ makeLatestQuery packageName = do package' <- getBy $ UniqueName packageName
                                       Just package -> do deleteBy $ UniqueLatestName name -- Remove any old latest record
                                                          insert_ $ Latest name (entityKey package) -- Insert new record with current latest version.
     where name = fst $ Package.splitPackageName packageName
+
+
+--Update the table to set fetched to true
+fetchedQuery name = do package' <- getBy $ UniqueName name
+                       case package' of
+                          Nothing -> return ()
+                          Just package -> update (entityKey package) [PackageSqliteFetched =. True]
+
+isFetchedQuery name = fmap (fmap (packageSqliteFetched . entityVal)) . getBy $ UniqueName name

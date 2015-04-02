@@ -5,6 +5,7 @@ module Package(PackageName, PackageDependencies(..), Package(..), PackageDatabas
                packageLatestList, packageLatestSource,
                packageList, packageSource,
                getPackage,
+               fetchAll,
                updateLatest
               ) where
 
@@ -78,6 +79,9 @@ class PackageDatabase a where
   latest :: a -> String -> IO (Maybe PackageName)
   --Returns in order from most dependenices to least
   latestPackageNameSource :: a -> IO (Source IO PackageName)
+  --Gets if a package has been fetched and sets that a package has been fetched
+  isFetched  :: a -> PackageName -> IO (Maybe Bool)
+  fetched :: PackageName -> a -> IO a
 
 --Convert data between backends
 convertBackend :: (PackageDatabase a, PackageDatabase b) => a -> IO b
@@ -191,6 +195,21 @@ packageList database = do pkgSource <- packageSource database
 packageLatestSource :: (PackageDatabase db) => db -> IO (Source IO Package)
 packageLatestSource database = do nameSource <- latestPackageNameSource database
                                   return $ nameSource $= CL.mapM (getPackage database)
+
+
+--Fetch all packages if fetch is successful add a note to the database that it is fetched
+fetchAll :: (PackageDatabase db) => db -> IO ()
+fetchAll database = do nameSource <- packageNameSource database
+                       nameSource $$ CL.mapM_ fetchPackage  --Map fetching package over the names.
+    where fetchPackage :: PackageName -> IO ()
+          fetchPackage name = do putStrLn name -- Add trace to see where we are
+                                 pFetched <- isFetched database name -- See if package already fetched
+                                 case pFetched of
+                                        Just False ->  do success <- System.fetch name
+                                                          if success then markFetched else return () -- If successfully fetched mark in db
+                                        otherwise -> return () -- Otherwise move onto the next package
+            where markFetched = fetched name database >> return () -- Mark as fetched in database fix return type
+
 
 
 --The list of available packages
