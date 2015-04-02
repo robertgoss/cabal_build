@@ -64,9 +64,11 @@ class BuildDatabase db where
   addId :: BuildId -> BuildData -> db -> IO db
   addResult :: BuildId -> BuildResult -> db -> IO db
   addPrimary :: PackageName -> BuildId -> db -> IO db
+  fetched :: BuildId -> db -> IO db
 
   getData :: db -> BuildId -> IO BuildData
   getResult :: db -> BuildId -> IO BuildResult
+  isFetched :: db -> BuildId -> IO Bool
   allIds :: db -> IO [BuildId]
 
 
