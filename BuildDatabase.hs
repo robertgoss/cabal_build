@@ -55,20 +55,20 @@ BuildData
     nDepends Int -- Stores a cache of the number of dependencies.
     UniqueId buildHash  -- The buildhash should be unique.
     deriving Show
-Result
+BuildResult
     buildId Build.BuildId
     buildResult BuildResult.BuildResult
     UniqueResultId buildId
     deriving Show
-Primary
+BuildPrimary
     package Package.PackageName
     buildId Build.BuildId 
     UniquePackage package 
     deriving Show
-BuildDependance -- Expresses relation of a build being dependant on another.
+BuildDependence -- Expresses relation of a build being dependant on another.
     build BuildDataId
     dependant Build.BuildId
-PackageDependance -- Expresses relation of a build being dependant on a package.
+BuildPackageDependence -- Expresses relation of a build being dependant on a package.
     build BuildDataId
     dependant Package.PackageName
     deriving Show
