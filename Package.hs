@@ -112,6 +112,11 @@ updateLatest database = do nameSource <- packageNameSource database
                   version = snd . splitPackageName
 
 
+--Fake package names
+-- These are pakage names that ar fake they cant be installed through the cabal system but still appear through
+-- The list command
+fake_package_names = ["ghc","bin-package-db","rts"]
+
 --Basic constructors of the full package database - either from a file or directly computed from system.
 --  These are the only constructors to be exported from this module so no partially constructed databases are made.
 -- Get the list of packagenames from the system and then iterativly add then to the system
@@ -121,8 +126,9 @@ fromSystem = do System.cleanCabalSystem -- Clean system so there are no local pa
                 putStrLn "Create empty database"
                 empty <- emptyDatabase
                 putStrLn "Loading package list..."
-                packageNames <- packageListFromSystem
-                let totalPackages = show $ length packageNames
+                packageNames' <- packageListFromSystem
+                let packageNames = filter isFake packageNames' -- Filter out the fake packages that appear in the system list
+                    totalPackages = show $ length packageNames
                 --Get the packages using packageFromSystem we add an enumeration to
                 -- Allow us to trace the process as it is very slow.
                 -- Then add the package to the database
@@ -133,6 +139,8 @@ fromSystem = do System.cleanCabalSystem -- Clean system so there are no local pa
                                                      db' <- addPackage package db -- Add package to the database and return the new database.
                                                      makeLatest name db' --Packages appear in version order in the system list.
         indices = [1..] :: [Int]
+        isFake name = (fst $ splitPackageName name) `elem` fake_package_names
+
 
 
 --Sub contructors used internally in this module to construct the package database from the system
