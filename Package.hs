@@ -4,7 +4,7 @@ module Package(PackageName, PackageDependencies(..), Package(..), PackageDatabas
                convertBackend,
                packageLatestList, packageLatestSource,
                packageList, packageSource,
-               getPackage,
+               getPackage,getInstalledPackages,
                fetchAll,
                updateLatest
               ) where
@@ -68,6 +68,7 @@ differentVersions :: Package -> PackageName -> Bool
 differentVersions  pkg pName = name pkg == name2
   where (name2,_) = splitPackageName pName
 
+
 --An abstrction of the features of a package database used in memeory
 class PackageDatabase a where
   emptyDatabase :: IO a
@@ -82,6 +83,8 @@ class PackageDatabase a where
   --Gets if a package has been fetched and sets that a package has been fetched
   isFetched  :: a -> PackageName -> IO (Maybe Bool)
   fetched :: PackageName -> a -> IO a
+  --Installed packages on the system
+  getInstalled :: a -> IO [PackageName]
 
 --Convert data between backends
 convertBackend :: (PackageDatabase a, PackageDatabase b) => a -> IO b
@@ -236,3 +239,7 @@ getPackage database name = do packageDependencies <- getDependency database name
                                                  version = packageVersion,
                                                  dependencies = fromJust packageDependencies
                                                }
+
+getInstalledPackages :: (PackageDatabase db) => db -> IO [Package]
+getInstalledPackages db = do inst <- getInstalled db 
+                             mapM (getPackage db) inst

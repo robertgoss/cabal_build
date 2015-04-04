@@ -103,6 +103,8 @@ instance Package.PackageDatabase PackageDatabaseSqlite where
           where getPackage pid = runSqlite sqliteFile . fmap (packageSqliteName . fromJust) $ get pid
                 getId = latestLatest . entityVal
 
+    getInstalled _ = runSqlite sqliteFile getInstalledQuery
+
 
 
 
@@ -137,8 +139,7 @@ instance Package.PackageDatabase PackageDatabasePostgres where
 
     --Get a source of package names
     -- Source means they dont all need to be loaded into memory - only id's need to be in memory
-    -- This is done in order (least to most of dependenices)
-    packageNameSource _ = do ids <- runPostgres $ selectKeysList [] [Asc PackageSqliteNDepends]
+    packageNameSource _ = do ids <- runPostgres $ selectKeysList [] [Asc PackageSqliteName]
                              return $ CL.sourceList ids $= CL.mapM getPackage
           where getPackage pid = runPostgres . fmap (packageSqliteName . fromJust) $ get pid
 
@@ -162,6 +163,8 @@ instance Package.PackageDatabase PackageDatabasePostgres where
                                    return $ CL.sourceList ids $= CL.mapM getPackage
           where getPackage pid = runPostgres . fmap (packageSqliteName . fromJust) $ get pid
                 getId = latestLatest . entityVal
+
+    getInstalled _ = runPostgres getInstalledQuery
 
 
 
@@ -215,3 +218,5 @@ fetchedQuery name = do package' <- getBy $ UniqueName name
                           Just package -> update (entityKey package) [PackageSqliteFetched =. True]
 
 isFetchedQuery name = fmap (fmap (packageSqliteFetched . entityVal)) . getBy $ UniqueName name
+
+getInstalledQuery = fmap (map (packageSqliteName . entityVal)) $ selectList [PackageSqliteInstalled ==. True] []

@@ -37,13 +37,14 @@ instance Show BuildData where
 
 
 --All the other packages which will be installed with a dependency.
-type Context = [Package]
+-- Also adds the packagenames of the installed packages on the system.
+type Context = ([Package],[PackageName])
 
 --Build dependencies should not count towards hash as equality should be determined by packacge and package dependencies alone
 getId :: BuildData -> BuildId
 getId buildData = asWord64 $ package' `combine` packageDependencies'
     where package' = hash $ package buildData
-          --Sort this list as ordering should not matter for equality.
+          --Sort this  as ordering should not matter for equality.
           packageDependencies' = hash . fmap sort $  packageDependencies buildData
 
 getIdFromPackages :: PackageName -> [PackageName] -> BuildId
@@ -111,7 +112,9 @@ addPrimaryBuildData name packageDatabase buildDatabase = do package <- getPackag
     where addBasedOnDeps package = case dependencies package of --Add based on if there has been resolutin failure
                                        -- The primary build is just a non-primary build data in 
                                        -- the context given by it's dependencies
-                                       (Dependencies deps) -> do context <- mapM (getPackage packageDatabase) deps
+                                       (Dependencies deps) -> do depPkgs <- mapM (getPackage packageDatabase) deps
+                                                                 installed <- getInstalled packageDatabase
+                                                                 let context = (depPkgs, installed)
                                                                  addNonPrimaryBuildData context package buildDatabase
                                         --There has been a resolution failure. Add in the stub build
                                        otherwise -> let stubData = BuildData name Nothing Nothing
@@ -146,7 +149,8 @@ addNonPrimaryBuildData context package buildDatabase
   where depends = getDependenciesFromContext context package
         buildId = getIdFromPackages name . map packageName $ depends
         name = packageName package
-        depIter (depIds,depDb) depPkg = do (depId,dbDep) <- addNonPrimaryBuildData depends depPkg depDb
+        newContext = (depends, snd context)
+        depIter (depIds,depDb) depPkg = do (depId,dbDep) <- addNonPrimaryBuildData newContext depPkg depDb
                                            return(depId:depIds, dbDep)
 
 
@@ -221,19 +225,31 @@ buildAll buildDatabase = do buildIds <- allIds buildDatabase
         indices = [1..] :: [Int]
 
 
+--Remove any duplicate entries from a list
+deDuplicate [] = []
+deDuplicate (x:xs) | x `elem` xs = deDuplicate xs
+                   | otherwise = x : deDuplicate xs
+
 --Helper functions for constructing a BuildData  
 --Filter out only those elements of the context which are dependencies of this package
+--Also if and of the dependencies are 
 getDependenciesFromContext :: Context -> Package -> [Package]
-getDependenciesFromContext context package = filter (isDependant depends) $ context
+getDependenciesFromContext context package = deDuplicate $ depends ++ installed
           --A context package is dependent if it is a different version of a known dependency of this package
     where isDependant depends cPackage = any (differentVersions cPackage) depends
+          -- Get the dependenices of ths packages that have versions in the context dependencies.
           --As this dependency exists in some context it has a resolution so either it has been found in which case
           -- We use that or it has not and we use the entire context without this package
           -- This will definatly contain a resolution and will not cause a regress by recalling this package
           depends = case dependencies package of
-                       Dependencies deps -> deps
-                       ResolutionUnknown -> map packageName $ filter (/=package) context
-
+                       Dependencies deps -> filter (isDependant deps) $ contextDeps
+                       ResolutionUnknown -> filter (/=package) $ contextDeps
+          (contextDeps,contextInstalled) = context
+          filteredInstalled = filter (not . differentVersions package) contextInstalled -- To prevent loops we know we a package 
+                                                                                        -- cant depend on a varient of itself.
+          --Packages in the context that appear (as varients) in installed packages 
+          -- our package may also depend on these as its resolution was computed in this context
+          installed = filter (isDependant filteredInstalled) $ contextDeps
 
 
 
