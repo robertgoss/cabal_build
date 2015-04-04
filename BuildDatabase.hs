@@ -161,7 +161,7 @@ allIdsQuery =  selectSource [] [] $$ CL.map onlyName =$ CL.consume
 --Get result find result entity with id and extract result
 getResultQuery buildId = do entity' <- getBy $ UniqueResultId buildId 
                             case entity' of
-                                (Just entity) -> return . resultBuildResult . entityVal $ entity
+                                (Just entity) -> return . buildResultBuildResult . entityVal $ entity
                                 Nothing -> return BuildResult.NotBuilt
 
 --Get result find entity with id and extract and construct build data 
@@ -172,11 +172,11 @@ getDataQuery buildId = do entity <- fmap fromJust $ getBy $ UniqueId buildId
                               resFailed = buildDataResolutionFailed val
                           --If resolution failed we can return now else get the dependencies
                           if resFailed then return $ Build.BuildData package Nothing Nothing
-                          else do bDependencies' <- selectList [BuildDependanceBuild ==. buildDataId] []
-                                  pDependencies' <- selectList [PackageDependanceBuild ==. buildDataId] []
+                          else do bDependencies' <- selectList [BuildDependenceBuild ==. buildDataId] []
+                                  pDependencies' <- selectList [BuildPackageDependenceBuild ==. buildDataId] []
                                   --Get build and ackage dependance entities.
-                                  let bDependencies = map (buildDependanceDependant . entityVal) bDependencies'
-                                      pDependencies = map (packageDependanceDependant . entityVal) pDependencies'
+                                  let bDependencies = map (buildDependenceDependant . entityVal) bDependencies'
+                                      pDependencies = map (buildPackageDependenceDependant . entityVal) pDependencies'
                                   return $ Build.BuildData package (Just pDependencies) (Just bDependencies)
 
 --Add id by construction sqlite build data and inserting it
@@ -185,11 +185,11 @@ getDataQuery buildId = do entity <- fmap fromJust $ getBy $ UniqueId buildId
 addIdQuery buildId buildData = do buildSqliteId <- insertUnique buildDataSqlite
                                   case buildSqliteId of
                                     Nothing -> return () -- This id is already in database
-                                    (Just bid) -> do insertUnique $ Result buildId BuildResult.NotBuilt
+                                    (Just bid) -> do insertUnique $ BuildResult buildId BuildResult.NotBuilt
                                                      case buildDependencies' of
                                                        Nothing -> return () 
-                                                       otherwise -> do insertMany_ . map (BuildDependance bid) $ deps -- If there are dependencies insert relations 
-                                                                       insertMany_ . map (PackageDependance bid) $ pDeps
+                                                       otherwise -> do insertMany_ . map (BuildDependence bid) $ deps -- If there are dependencies insert relations 
+                                                                       insertMany_ . map (BuildPackageDependence bid) $ pDeps
 
     where package' = Build.package buildData
           buildDependencies' = Build.buildDependencies buildData
@@ -205,10 +205,10 @@ addIdQuery buildId buildData = do buildSqliteId <- insertUnique buildDataSqlite
 
 --Add result by finding result with build id and updating it's build result
 addResultQuery buildId buildResult = do entity <- fmap fromJust $ getBy $ UniqueResultId buildId
-                                        update (entityKey entity) [ResultBuildResult =. buildResult]
+                                        update (entityKey entity) [BuildResultBuildResult =. buildResult]
 
 --Insert a link by constructing an element of the primary table
-addPrimaryQuery package buildId = insert $ Primary package buildId
+addPrimaryQuery package buildId = insert $ BuildPrimary package buildId
 
 --See just if this id exists in the database
 idExistsQuery buildId = fmap isJust . getBy $ UniqueId buildId
