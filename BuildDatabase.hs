@@ -90,6 +90,7 @@ sqliteFile = "build-sqlite.data"
 
 instance Build.BuildDatabase BuildDatabaseSqlite where
     emptyBuildDatabase = runSqlite sqliteFile $ do runMigration migrateAll
+                                                   runSqlite sqliteFile dropAllQuery
                                                    return $ BuildDatabaseSqlite 
 
     addId buildId buildData _ = runSqlite sqliteFile $ do addIdQuery buildId buildData
@@ -133,6 +134,7 @@ runPostgres = runResourceT
 
 instance Build.BuildDatabase BuildDatabasePostgres where
     emptyBuildDatabase = runPostgres $ do runMigration migrateAll
+                                          runPostgres dropAllQuery
                                           return BuildDatabasePostgres
 
     addId buildId buildData _ = runPostgres $ do addIdQuery buildId buildData
@@ -212,3 +214,17 @@ addPrimaryQuery package buildId = insert $ BuildPrimary package buildId
 
 --See just if this id exists in the database
 idExistsQuery buildId = fmap isJust . getBy $ UniqueId buildId
+
+
+--Drop all data so we have empty database
+-- Use 2 optins so type checker can work out which tables we need
+dropAllQuery = do deleteWhere [BuildResultBuildId ==. 0] 
+                  deleteWhere [BuildResultBuildId !=. 0] 
+                  deleteWhere [BuildPrimaryBuildId ==. 0] 
+                  deleteWhere [BuildPrimaryBuildId !=. 0] 
+                  deleteWhere [BuildDependenceDependant ==. 0] 
+                  deleteWhere [BuildDependenceDependant !=. 0] 
+                  deleteWhere [BuildPackageDependenceDependant ==. ""] 
+                  deleteWhere [BuildPackageDependenceDependant !=. ""] 
+                  deleteWhere [BuildDataBuildHash ==. 0]
+                  deleteWhere [BuildDataBuildHash !=. 0]
