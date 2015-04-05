@@ -1,8 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ExtendedDefaultRules #-}
 {-# OPTIONS_GHC -fno-warn-type-defaults #-}
-module System(packageList,dependencies,fetch,build,register,
-	           cleanCabalSystem,
+module System(packageList,
+              pureDependencies,
+              dependencies,fetch,build,register,
+	            cleanCabalSystem,
              DepError(..),BuildStatus(..)) where
 
 --Import of shelly library - it defaults to using Text instead of string
@@ -165,7 +167,33 @@ buildSh packageName hash = do home_env <- get_env_text "HOME"
                                                         else return BuildSuccess -- No failures happened.
 
 
+--Pure dependencies 
+--These are the package types that a given package depends on and are independent between systems
+pureDependencies :: String -> IO [String]
+pureDependencies = shelly . silently . liftM (map T.unpack) . pureDependenciesSh . T.pack
 
+
+--Scrape the data using the cabal info command
+pureDependenciesSh :: T.Text -> Sh [T.Text]
+pureDependenciesSh name = do infoTxt <- run "cabal" ["info", name]
+                             --get he lines in info relating to the dependencies
+                             --We want the lines between the first appearance of "Dependancy:"
+                             -- And the next header - which we can find by looking for the next line containing a colon
+                             let infoLines = dropWhile notDependencies $ T.lines infoTxt
+                                 --Remove the Dependency: from the first line
+                                 -- And on the tail take until hit next colon
+                                 -- This must be done on tail as first line contains a colon from Dependencies:
+                                 infoLines' = (removeDependencies $ head infoLines) : (takeWhile noColon $ tail infoLines)
+                                 --Concat together and split into individual dependants
+                                 dependentsRough = T.splitOn "," $ T.concat infoLines'
+                                 --For each rough dependant extract the packagetype - it is the first non-empty word
+                                 dependentTypes = map (firstNonNull . T.words) dependentsRough
+                             --Return dependant types
+                             return dependentTypes
+    where noColon text = not $ ":" `T.isInfixOf` text
+          notDependencies text = not $ "Dependencies:" `T.isInfixOf` text 
+          removeDependencies = snd . T.breakOnEnd "Dependencies:"
+          firstNonNull = head . dropWhile T.null
 
 
 -- Internal commands to help manage the system state.
