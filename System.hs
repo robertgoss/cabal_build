@@ -189,7 +189,9 @@ pureDependenciesSh name = do infoTxt <- run "cabal" ["info", name]
                                  --For each rough dependant extract the packagetype - it is the first non-empty word
                                  dependentTypes = map (firstNonNull . T.words) dependentsRough
                              --Return dependant types
-                             return dependentTypes
+                             --Deal with the case in which no dependency is specified (Thus infoLines' cant be computed)
+                             if null infoLines then return []
+                                               else return dependentTypes
     where noColon text = not $ ":" `T.isInfixOf` text
           notDependencies text = not $ "Dependencies:" `T.isInfixOf` text 
           removeDependencies = snd . T.breakOnEnd "Dependencies:"
