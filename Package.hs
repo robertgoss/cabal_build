@@ -54,6 +54,7 @@ class PackageDatabase db where
 
   packageNameSource :: db -> IO (Source IO PackageName)
 
+  fetchedSource :: db -> IO (Source IO PackageName)
   unfetchedSource :: db -> IO (Source IO PackageName)
   fetched :: PackageName -> db -> IO () 
 
