@@ -29,7 +29,8 @@ data PackageName = PackageName PackageType PackageVersion
   deriving(Eq,Ord)
 
 instance Show PackageName where
-  show (PackageName pType pVersion) = concat . intersperse "-" $ pType : map show pVersion
+  show (PackageName pType pVersion) = pType ++ "-" ++ stringVersion
+    where stringVersion = concat . intersperse "." $ map show pVersion
 
 
 --Construct a packageName from a string
