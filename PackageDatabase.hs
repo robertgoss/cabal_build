@@ -176,12 +176,12 @@ instance Package.PackageDatabase PackageDatabasePostgres where
 
   --Drop all data so we have empty database
 -- Use 2 optins so type checker can work out which tables we need
-deleteAllQuery = do deleteWhere [PackageFetched ==. True] 
-                    deleteWhere [PackageFetched !=. True] 
-                    deleteWhere [PackagePureDependenceDependant ==. ""] 
+deleteAllQuery = do deleteWhere [PackagePureDependenceDependant ==. ""] 
                     deleteWhere [PackagePureDependenceDependant !=. ""]
                     deleteWhere [PackageLatestPType ==. ""] 
                     deleteWhere [PackageLatestPType !=. ""]
+                    deleteWhere [PackageFetched ==. True] 
+                    deleteWhere [PackageFetched !=. True] 
 
 fetchedQuery packageName = do package' <- getBy $ UniqueName packageType packageVersion
                               case package' of
