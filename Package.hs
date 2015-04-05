@@ -3,6 +3,7 @@ module Package(PackageType,PackageVersion,
                Package(..),
                PackageDatabase(..),
                createPackageDatabase,
+               fetchAll,
                convertBackend
     ) where
 
@@ -62,9 +63,15 @@ class PackageDatabase db where
 
   packageNameSource :: db -> IO (Source IO PackageName)
 
+
   fetchedSource :: db -> IO (Source IO PackageName)
-  unfetchedSource :: db -> IO (Source IO PackageName)
+  unFetchedSource :: db -> IO (Source IO PackageName)
   fetched :: db -> PackageName  -> IO () 
+
+  getLatest :: db -> PackageType -> IO (Maybe Package)
+  makeLatest :: db -> PackageName -> IO ()
+
+  latestPackageSource :: db -> IO (Source IO PackageName)
 
 --Get a package from system data.
 packageFromSystem :: PackageName -> IO Package
@@ -82,10 +89,12 @@ createPackageDatabase = do database <- emptyDatabase
                                          let pName = fromString name
                                          package <- packageFromSystem pName
                                          addPackage database package
+                                         makeLatest database pName  -- This will set the latest package to the current package
+                                                                    -- As system returns packages in version order this works overall
 
 --Attempt to fetch all the packages
 fetchAll :: (PackageDatabase db) => db -> IO ()
-fetchAll database = do unfetched <- unfetchedSource database
+fetchAll database = do unfetched <- unFetchedSource database
                        unfetched $$ CL.mapM_ fetchPackage 
         --Fetch each individual unfetched package if fetch success mark as fetched
     where fetchPackage packageName = do success <- System.fetch $ show packageName
@@ -101,6 +110,10 @@ convertBackend database = do newDatabase <- emptyDatabase
                              --Mark all the fetched packages
                              fetchedS <- fetchedSource database
                              fetchedS $$ CL.mapM_ (fetched newDatabase)
+                             --Mark all latest package
+                             latestSource <- latestPackageSource database
+                             latestSource $$ CL.mapM_ (makeLatest newDatabase)
+                             --Return
                              return newDatabase
      where movePackage dbOld dbNew name = do package <- liftM fromJust $ getPackage dbOld name --Can use fromjust as fro db.
                                              addPackage dbNew package

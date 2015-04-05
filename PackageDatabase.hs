@@ -19,6 +19,7 @@ import Data.Conduit
 import qualified Data.Conduit.List as CL
 import Data.Maybe(fromJust)
 import Debug.Trace(trace)
+import Control.Monad(liftM)
 import Control.Monad.Trans.Resource(runResourceT,ResourceT)
 import Control.Monad.Logger(runNoLoggingT,NoLoggingT)
 import Control.Monad.IO.Class (MonadIO (..))
@@ -50,9 +51,9 @@ PackagePureDependence
     dependant Package.PackageType -- The the package types that this package will rely on.
     deriving Show
 PackageLatest -- A map of the latest version of a package
-    name Package.PackageType -- The name of package without version
+    pType Package.PackageType -- The type of the package
     latest PackageId -- Assosiated latest package
-    UniqueLatestType name
+    UniqueLatestType pType
 |]
 
 --Helper function to get a PakageName from a Package
@@ -73,8 +74,12 @@ loadSqlitePackageDatabase = runSqlite sqliteFile $ do runMigration migrateAll
 
 
 --Helper function
-getSqlitePackageName key = runSqlite sqliteFile $ do package <- get key
-                                                     return . getName . fromJust $ package
+getSqlitePackageName key = runSqlite sqliteFile $ getPackageNameQuery key
+
+getSqliteLatest key = do latestKey <- runSqlite sqliteFile $ get key
+                         let latestNameKey = packageLatestLatest . fromJust $ latestKey
+                         getSqlitePackageName latestNameKey
+
 
 --Convert PackageDatabaseSqlite to be a packagedatabase
 -- Here we use a constant path to the database for now.
@@ -87,6 +92,9 @@ instance Package.PackageDatabase PackageDatabaseSqlite where
     getPackage _ packageName = runSqlite sqliteFile $ getPackageQuery packageName
     fetched _ packageName = runSqlite sqliteFile $ fetchedQuery packageName
 
+    makeLatest _ packageName = runSqlite sqliteFile $ makeLatestQuery packageName
+    getLatest _ packageType = runSqlite sqliteFile $ getLatestQuery packageType
+
     --Get  full list only of the Ids to save space
     -- Cant use the source from persistent as need to mapM in IO
     packageNameSource _ = do keysList <- runSqlite sqliteFile $ selectKeysList [] []
@@ -97,6 +105,10 @@ instance Package.PackageDatabase PackageDatabaseSqlite where
                          return $ CL.sourceList keysList $= CL.mapM getSqlitePackageName 
     unFetchedSource _ = do keysList <- runSqlite sqliteFile $ selectKeysList [PackageFetched ==. False] []
                            return $ CL.sourceList keysList $= CL.mapM getSqlitePackageName 
+
+    --Get the latest package version of above
+    latestPackageSource db = do keysList <- runSqlite sqliteFile $ selectKeysList [] []
+                                return $ CL.sourceList keysList $= CL.mapM getSqliteLatest
 
 
 --We do not expose this constructor so the only availible constructor creates an empty database
@@ -124,8 +136,11 @@ loadPostgresPackageDatabase = runPostgres $ do runMigration migrateAll
                                                return PackageDatabasePostgres
 
 --Helper function
-getPostgresPackageName key = runPostgres $ do package <- get key
-                                              return . getName . fromJust $ package
+getPostgresPackageName key = runPostgres $ getPackageNameQuery key
+
+getPostgresLatest key = do latestKey <- runPostgres $ get key
+                           let latestNameKey = packageLatestLatest . fromJust $ latestKey
+                           getPostgresPackageName latestNameKey
 
 --Convert PackageDatabasePostgres to be a packagedatabase
 -- Here we use a constant connection to the database for now.
@@ -138,6 +153,9 @@ instance Package.PackageDatabase PackageDatabasePostgres where
     getPackage _ packageName = runPostgres $ getPackageQuery packageName
     fetched _ packageName = runPostgres $ fetchedQuery packageName
 
+    makeLatest _ packageName = runPostgres $ makeLatestQuery packageName
+    getLatest _ packageType = runPostgres $ getLatestQuery packageType
+
     --Get  full list only of the Ids to save space
     -- Cant use the source from persistent as need to mapM in IO
     packageNameSource _ = do keysList <- runPostgres $ selectKeysList [] []
@@ -149,6 +167,9 @@ instance Package.PackageDatabase PackageDatabasePostgres where
     unFetchedSource _ = do keysList <- runPostgres $ selectKeysList [PackageFetched ==. False] []
                            return $ CL.sourceList keysList $= CL.mapM getPostgresPackageName 
 
+    --Get the latest package version of above
+    latestPackageSource db = do keysList <- runPostgres $ selectKeysList [] []
+                                return $ CL.sourceList keysList $= CL.mapM getPostgresLatest
 
 
 --Required queries
@@ -159,6 +180,8 @@ deleteAllQuery = do deleteWhere [PackageFetched ==. True]
                     deleteWhere [PackageFetched !=. True] 
                     deleteWhere [PackagePureDependenceDependant ==. ""] 
                     deleteWhere [PackagePureDependenceDependant !=. ""]
+                    deleteWhere [PackageLatestPType ==. ""] 
+                    deleteWhere [PackageLatestPType !=. ""]
 
 fetchedQuery packageName = do package' <- getBy $ UniqueName packageType packageVersion
                               case package' of
@@ -184,3 +207,28 @@ getPackageQuery packageName = do package' <- getBy $ UniqueName packageType pack
                                                          return . Just $ Package.Package packageName $ map getDep deps
   where (Package.PackageName packageType packageVersion) = packageName
         getDep = packagePureDependenceDependant . entityVal
+
+
+makeLatestQuery packageName = do package' <- getBy $ UniqueName packageType packageVersion
+                                 case package' of
+                                    Nothing -> return () -- Package is not know
+                                    --Update new link if it exists or insert it
+                                    Just package -> do upsert (PackageLatest packageType (entityKey package))  --New record to insert
+                                                              [PackageLatestLatest =. entityKey package] --Otheriwse update the entity key
+                                                       return () -- Keep types happy
+  where (Package.PackageName packageType packageVersion) = packageName
+
+
+
+--Gets package name from given id -- assumes exists
+getPackageNameQuery key = do package <- get key
+                             return . getName . fromJust $ package
+
+--Returns id of latest package with given package type
+-- Wrapped in Maybe
+getLatestQuery packageType = do latest' <- getBy $ UniqueLatestType packageType
+                                case latest' of
+                                  Nothing -> return Nothing
+                                  Just latest -> do packageName <- getPackageNameQuery $ getPackId latest
+                                                    getPackageQuery packageName
+  where getPackId = packageLatestLatest . entityVal
