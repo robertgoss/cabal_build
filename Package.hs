@@ -2,13 +2,21 @@ module Package(PackageType,PackageVersion,
                PackageName(..), sameType, 
                Package(..),
                PackageDatabase(..),
-               createPackageDatabase
+               createPackageDatabase,
+               convertBackend
     ) where
 
 import Data.List.Split(splitOn)
 import Data.List(intersperse)
+import Control.Monad(liftM)
+import Data.Maybe(fromJust)
+
+import Text.Format(format)
 
 import Data.Conduit
+import qualified Data.Conduit.List as CL
+
+import System
 
 type PackageType = String
 type PackageVersion = [Int]
@@ -49,21 +57,50 @@ data Package = Package {
 class PackageDatabase db where
   emptyDatabase :: IO db
 
-  addPackage :: Package -> db -> IO () 
+  addPackage :: db -> Package -> IO () 
   getPackage :: db -> PackageName -> IO (Maybe Package)
 
   packageNameSource :: db -> IO (Source IO PackageName)
 
   fetchedSource :: db -> IO (Source IO PackageName)
   unfetchedSource :: db -> IO (Source IO PackageName)
-  fetched :: PackageName -> db -> IO () 
+  fetched :: db -> PackageName  -> IO () 
 
+--Get a package from system data.
 packageFromSystem :: PackageName -> IO Package
-packageFromSystem = undefined
+packageFromSystem pName = do pureDeps <- System.pureDependencies $ show pName
+                             return $ Package pName pureDeps
 
+--Get package list from system and add for each package get the data from the system and add to database.
 createPackageDatabase :: (PackageDatabase db) => IO db 
-createPackageDatabase = undefined
+createPackageDatabase = do database <- emptyDatabase
+                           nameList <- System.packageList
+                           mapM (addName database) $ zip [1..] nameList --Add each of the names to the database 
+                           return database
+    where addName :: (PackageDatabase db) => db -> (Int,String) -> IO ()
+          addName database (i,name) = do putStrLn $ format "{0} - {1}" [show i,name] -- Add a trace to see where we are. 
+                                         let pName = fromString name
+                                         package <- packageFromSystem pName
+                                         addPackage database package
+
+--Attempt to fetch all the packages
+fetchAll :: (PackageDatabase db) => db -> IO ()
+fetchAll database = do unfetched <- unfetchedSource database
+                       unfetched $$ CL.mapM_ fetchPackage 
+        --Fetch each individual unfetched package if fetch success mark as fetched
+    where fetchPackage packageName = do success <- System.fetch $ show packageName
+                                        if success then fetched database packageName
+                                                   else return ()
 
 
 convertBackend :: (PackageDatabase db, PackageDatabase db') => db -> IO db'
-convertBackend = undefined 
+convertBackend database = do newDatabase <- emptyDatabase
+                             --Add all packages from old databse to new database
+                             nameSource <- packageNameSource database
+                             nameSource $$ CL.mapM_ (movePackage database newDatabase)
+                             --Mark all the fetched packages
+                             fetchedS <- fetchedSource database
+                             fetchedS $$ CL.mapM_ (fetched newDatabase)
+                             return newDatabase
+     where movePackage dbOld dbNew name = do package <- liftM fromJust $ getPackage dbOld name --Can use fromjust as fro db.
+                                             addPackage dbNew package
