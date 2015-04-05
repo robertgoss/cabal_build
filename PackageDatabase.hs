@@ -18,6 +18,7 @@ import Database.Persist.Postgresql
 import Data.Conduit
 import qualified Data.Conduit.List as CL
 import Data.Maybe(fromJust)
+import Data.Set(toList,fromList)
 import Debug.Trace(trace)
 import Control.Monad(liftM)
 import Control.Monad.Trans.Resource(runResourceT,ResourceT)
@@ -194,7 +195,7 @@ fetchedQuery packageName = do package' <- getBy $ UniqueName packageType package
 addPackageQuery package = do packageKey' <- insertUnique $ Package packageType packageVersion True
                              case packageKey' of
                                  Nothing -> return ()
-                                 Just packageKey -> insertMany_ $ map (PackagePureDependence packageKey) pureDependencies
+                                 Just packageKey -> insertMany_ $ map (PackagePureDependence packageKey) (toList pureDependencies)
   where (Package.PackageName packageType packageVersion) = Package.name package
         pureDependencies = Package.pureDependencies package
         packageRow = Package packageType packageVersion True
@@ -204,7 +205,7 @@ getPackageQuery packageName = do package' <- getBy $ UniqueName packageType pack
                                     Nothing -> return Nothing
                                     (Just package) -> do let packageKey = entityKey package
                                                          deps <- selectList [PackagePureDependencePackage ==. packageKey] []
-                                                         return . Just $ Package.Package packageName $ map getDep deps
+                                                         return . Just $ Package.Package packageName $ fromList (map getDep deps)
   where (Package.PackageName packageType packageVersion) = packageName
         getDep = packagePureDependenceDependant . entityVal
 

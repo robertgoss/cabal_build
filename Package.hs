@@ -9,6 +9,7 @@ module Package(PackageType,PackageVersion,
 
 import Data.List.Split(splitOn)
 import Data.List(intersperse)
+import Data.Set(Set,fromList,toList)
 import Control.Monad(liftM)
 import Data.Maybe(fromJust)
 
@@ -52,7 +53,7 @@ sameType (PackageName type1 _) (PackageName type2 _) = type1 == type2
 
 data Package = Package {
   name :: PackageName,
-  pureDependencies :: [PackageType]
+  pureDependencies :: Set PackageType
 } 
 
 
@@ -84,7 +85,7 @@ notFakePackageName (PackageName pType _) = notFakePackageType pType
 --Get a package from system data.
 packageFromSystem :: PackageName -> IO Package
 packageFromSystem pName = do pureDeps <- System.pureDependencies $ show pName
-                             return $ Package pName (filter notFakePackageType pureDeps)
+                             return $ Package pName (fromList $ filter notFakePackageType pureDeps)
 
 
 --Get package list from system and add for each package get the data from the system and add to database.
