@@ -74,24 +74,33 @@ class PackageDatabase db where
 
   latestPackageSource :: db -> IO (Source IO PackageName)
 
+--Filters out 'fake' packages that are used behind the scenes and which are immutable like ghc and bin-package-db
+fakePackageTypes = ["ghc","bin-package-db"]
+
+notFakePackageType pType =  pType `notElem` fakePackageTypes
+notFakePackageName (PackageName pType _) = notFakePackageType pType 
+
+
 --Get a package from system data.
 packageFromSystem :: PackageName -> IO Package
 packageFromSystem pName = do pureDeps <- System.pureDependencies $ show pName
-                             return $ Package pName pureDeps
+                             return $ Package pName (filter notFakePackageType pureDeps)
+
 
 --Get package list from system and add for each package get the data from the system and add to database.
 createPackageDatabase :: (PackageDatabase db) => IO db 
 createPackageDatabase = do database <- emptyDatabase
-                           nameList <- System.packageList
+                           nameList' <- System.packageList 
+                           --Convert to package names and filter out fake virtual packages
+                           let nameList = filter notFakePackageName $ map fromString nameList'
                            mapM (addName database) $ zip [1..] nameList --Add each of the names to the database 
                            return database
-    where addName :: (PackageDatabase db) => db -> (Int,String) -> IO ()
-          addName database (i,name) = do putStrLn $ format "{0} - {1}" [show i,name] -- Add a trace to see where we are. 
-                                         let pName = fromString name
-                                         package <- packageFromSystem pName
-                                         addPackage database package
-                                         makeLatest database pName  -- This will set the latest package to the current package
-                                                                    -- As system returns packages in version order this works overall
+    where addName :: (PackageDatabase db) => db -> (Int,PackageName) -> IO ()
+          addName database (i,pName) = do putStrLn $ format "{0} - {1}" [show i,show pName] -- Add a trace to see where we are. 
+                                          package <- packageFromSystem pName
+                                          addPackage database package
+                                          makeLatest database pName  -- This will set the latest package to the current package
+                                                                     -- As system returns packages in version order this works overall
 
 --Attempt to fetch all the packages
 fetchAll :: (PackageDatabase db) => db -> IO ()
