@@ -37,25 +37,27 @@ type VersionString = String
 --                                                                 PackageSqite Name
 
 share [mkPersist sqlSettings, mkMigrate "migrateAll"] [persistLowerCase|
-PackageSqlite
-    name Package.PackageName -- Allow pulling name list out of database without reconstructing dependencies
-    resolutionFailed Bool -- If the resolution failed
-    backjumpReached Bool -- If the backjump limit was reached during resolution
-                         -- This may mean with more resources a resolution can be found.
-    installed Bool --If this package is installed on the system
-    nDepends Int -- Cached result - number of dependences this package has.
+Package
+    -- Allow pulling name list out of database without reconstructing dependencies
+    packageType Package.PackageType
+    packageVersion [Int] -- We have to store the version data as a string 
+                         -- Auto converted by persistent
     fetched Bool -- If this package has been fetched on the system. Default that it hasn't.
-    UniqueName name
+    UniqueName packageType packageVersion -- The package name is a combination of these two and is unique as a pair
     deriving Show 
-PackageDependence
-    package PackageSqliteId
-    dependant Package.PackageName
+PackagePureDependence
+    package PackageId
+    dependant Package.PackageType -- The the package types that this package will rely on.
     deriving Show
-Latest -- A map of the latest version of a package
-    name String -- The name of package without version
-    latest PackageSqliteId -- Assosiated latest package
-    UniqueLatestName name
+PackageLatest -- A map of the latest version of a package
+    name Package.PackageType -- The name of package without version
+    latest PackageId -- Assosiated latest package
+    UniqueLatestType name
 |]
+
+--Helper function to get a PakageName from a Package
+getName :: Package -> Package.PackageName
+getName package = Package.PackageName (packagePackageType package) (packagePackageVersion package)
 
 
 --We do not expose this constructor so the only availible constructor creates an empty database
@@ -69,49 +71,39 @@ loadSqlitePackageDatabase :: IO PackageDatabaseSqlite
 loadSqlitePackageDatabase = runSqlite sqliteFile $ do runMigration migrateAll
                                                       return PackageDatabaseSqlite
 
+
+--Helper function
+getSqlitePackageName key = runSqlite sqliteFile $ do package <- get key
+                                                     return . getName . fromJust $ package
+
 --Convert PackageDatabaseSqlite to be a packagedatabase
 -- Here we use a constant path to the database for now.
 instance Package.PackageDatabase PackageDatabaseSqlite where
+    --Load the database by deleting all after a migraion
     emptyDatabase = runSqlite sqliteFile $ do runMigration migrateAll
+                                              deleteAllQuery 
                                               return PackageDatabaseSqlite
+    addPackage _ package = runSqlite sqliteFile $ addPackageQuery package
+    getPackage _ packageName = runSqlite sqliteFile $ getPackageQuery packageName
+    fetched _ packageName = runSqlite sqliteFile $ fetchedQuery packageName
 
-    --Get a source of package names
-    -- Source means they dont all need to be loaded into memory - only id's need to be in memory
-    -- This is done in order (least to most of dependenices)
-    packageNameSource _ = do ids <- runSqlite sqliteFile $ selectKeysList [] [Asc PackageSqliteNDepends]
-                             return $ CL.sourceList ids $= CL.mapM getPackage
-          where getPackage pid = runSqlite sqliteFile . fmap (packageSqliteName . fromJust) $ get pid
+    --Get  full list only of the Ids to save space
+    -- Cant use the source from persistent as need to mapM in IO
+    packageNameSource _ = do keysList <- runSqlite sqliteFile $ selectKeysList [] []
+                             return $ CL.sourceList keysList $= CL.mapM getSqlitePackageName 
 
-    insert name deps _ = runSqlite sqliteFile $ do insertQuery name deps
-                                                   return PackageDatabaseSqlite
-    getDependency _ name = runSqlite sqliteFile $ dependenceQuery name
-
-    latest _ name = runSqlite sqliteFile $ latestQuery name
-
-    makeLatest name _ = runSqlite sqliteFile $ do makeLatestQuery name
-                                                  return PackageDatabaseSqlite
-
-    fetched name _ = runSqlite sqliteFile $ do fetchedQuery name
-                                               return PackageDatabaseSqlite
-
-    isFetched _ name = runSqlite sqliteFile $ isFetchedQuery name
-
-    --Get a source of package names
-    -- Source means they dont all need to be loaded into memory - only id's need to be in memory
-    latestPackageNameSource _ = do ids <- runSqlite sqliteFile $ selectSource [] [] $= CL.map getId $$ CL.consume
-                                   return $ CL.sourceList ids $= CL.mapM getPackage
-          where getPackage pid = runSqlite sqliteFile . fmap (packageSqliteName . fromJust) $ get pid
-                getId = latestLatest . entityVal
-
-    getInstalled _ = runSqlite sqliteFile getInstalledQuery
-
-
+    --Fetched and unfetched versions of above
+    fetchedSource _ = do keysList <- runSqlite sqliteFile $ selectKeysList [PackageFetched ==. True] []
+                         return $ CL.sourceList keysList $= CL.mapM getSqlitePackageName 
+    unFetchedSource _ = do keysList <- runSqlite sqliteFile $ selectKeysList [PackageFetched ==. False] []
+                           return $ CL.sourceList keysList $= CL.mapM getSqlitePackageName 
 
 
 --We do not expose this constructor so the only availible constructor creates an empty database
 --Keep a set of the current packages
 --Postgressql
 data PackageDatabasePostgres = PackageDatabasePostgres 
+
 
 --Hardcoded connection string
 connectionString = "host=localhost user=cabal_build password=cabal dbname=cabal_build"
@@ -131,92 +123,64 @@ loadPostgresPackageDatabase :: IO PackageDatabasePostgres
 loadPostgresPackageDatabase = runPostgres $ do runMigration migrateAll
                                                return PackageDatabasePostgres
 
---Convert PackageDatabaseSqlite to be a packagedatabase
--- Here we use a constant path to the database for now.
+--Helper function
+getPostgresPackageName key = runPostgres $ do package <- get key
+                                              return . getName . fromJust $ package
+
+--Convert PackageDatabasePostgres to be a packagedatabase
+-- Here we use a constant connection to the database for now.
 instance Package.PackageDatabase PackageDatabasePostgres where
+    --Load the database by deleting all after a migraion
     emptyDatabase = runPostgres $ do runMigration migrateAll
+                                     deleteAllQuery 
                                      return PackageDatabasePostgres
+    addPackage _ package = runPostgres $ addPackageQuery package
+    getPackage _ packageName = runPostgres $ getPackageQuery packageName
+    fetched _ packageName = runPostgres $ fetchedQuery packageName
 
-    --Get a source of package names
-    -- Source means they dont all need to be loaded into memory - only id's need to be in memory
-    packageNameSource _ = do ids <- runPostgres $ selectKeysList [] [Asc PackageSqliteName]
-                             return $ CL.sourceList ids $= CL.mapM getPackage
-          where getPackage pid = runPostgres . fmap (packageSqliteName . fromJust) $ get pid
+    --Get  full list only of the Ids to save space
+    -- Cant use the source from persistent as need to mapM in IO
+    packageNameSource _ = do keysList <- runPostgres $ selectKeysList [] []
+                             return $ CL.sourceList keysList $= CL.mapM getPostgresPackageName 
 
-    insert name deps _ = runPostgres $ do insertQuery name deps
-                                          return PackageDatabasePostgres
-    getDependency _ name = runPostgres $ dependenceQuery name
-
-    latest _ name = runPostgres $ latestQuery name
-
-    makeLatest name _ = runPostgres $ do makeLatestQuery name
-                                         return PackageDatabasePostgres
-
-    fetched name _ = runPostgres $ do fetchedQuery name
-                                      return PackageDatabasePostgres
-
-    isFetched _ name = runPostgres $ isFetchedQuery name
-
-    --Get a source of package names
-    -- Source means they dont all need to be loaded into memory - only id's need to be in memory
-    latestPackageNameSource _ = do ids <- runPostgres $ selectSource [] [] $= CL.map getId $$ CL.consume
-                                   return $ CL.sourceList ids $= CL.mapM getPackage
-          where getPackage pid = runPostgres . fmap (packageSqliteName . fromJust) $ get pid
-                getId = latestLatest . entityVal
-
-    getInstalled _ = runPostgres getInstalledQuery
-
+    --Fetched and unfetched versions of above
+    fetchedSource _ = do keysList <- runPostgres $ selectKeysList [PackageFetched ==. True] []
+                         return $ CL.sourceList keysList $= CL.mapM getPostgresPackageName 
+    unFetchedSource _ = do keysList <- runPostgres $ selectKeysList [PackageFetched ==. False] []
+                           return $ CL.sourceList keysList $= CL.mapM getPostgresPackageName 
 
 
 
 --Required queries
 
---Insert based on type of dependence
-insertQuery name Package.NotResolved = insert_ $ PackageSqlite name True False False 0 False
-insertQuery name Package.ResolutionUnknown = insert_ $ PackageSqlite name True True False 0 False
-insertQuery name Package.Installed = insert_ $ PackageSqlite name True False True 0 False
---Resolution succeded so also add dependence relations.
-insertQuery name (Package.Dependencies deps) = do pkgId <- insert $ PackageSqlite name False False False (length deps) False
-                                                  insertMany_ $ zipWith PackageDependence (repeat pkgId) deps
+  --Drop all data so we have empty database
+-- Use 2 optins so type checker can work out which tables we need
+deleteAllQuery = do deleteWhere [PackageFetched ==. True] 
+                    deleteWhere [PackageFetched !=. True] 
+                    deleteWhere [PackagePureDependenceDependant ==. ""] 
+                    deleteWhere [PackagePureDependenceDependant !=. ""]
 
-dependenceQuery name = do package' <- getBy $ UniqueName name
-                          case package' of 
-                            Nothing -> return Nothing -- Could not find the package returning nothing
-                            Just package -> if not (resolutionFailed package) -- Resolution succeded return dependencies 
-                                                                              -- Get dependencies with query then wrap
-                                                then do deps <- getDependenceQuery $ entityKey package 
-                                                        return . Just . Package.Dependencies $ deps
-                                                else -- Resolution failedfind out why and return answer
-                                                     --Chek through other resound that resolution may have failed
-                                                     if installed package then return $ Just Package.Installed
-                                                                          else if backjump package then return $ Just Package.ResolutionUnknown
-                                                                                                   else return $ Just Package.NotResolved 
-    where getDependenceQuery packageId = do dependencies <- selectList [PackageDependencePackage ==. packageId] []
-                                            return . Prelude.map (packageDependenceDependant . entityVal) $ dependencies
-          resolutionFailed = packageSqliteResolutionFailed . entityVal
-          installed = packageSqliteInstalled . entityVal
-          backjump = packageSqliteBackjumpReached . entityVal
+fetchedQuery packageName = do package' <- getBy $ UniqueName packageType packageVersion
+                              case package' of
+                                 Nothing -> return ()
+                                 (Just package) -> update (entityKey package) [PackageFetched =. True]
 
-latestQuery name = do latest' <- getBy $ UniqueLatestName name
-                      case latest' of
-                          Nothing -> return Nothing
-                          (Just latest) -> do package <- get . latestLatest $ entityVal latest
-                                              return . Just . packageSqliteName . fromJust $ package
+  where (Package.PackageName packageType packageVersion) = packageName
 
-makeLatestQuery packageName = do package' <- getBy $ UniqueName packageName
+
+addPackageQuery package = do packageKey' <- insertUnique $ Package packageType packageVersion True
+                             case packageKey' of
+                                 Nothing -> return ()
+                                 Just packageKey -> insertMany_ $ map (PackagePureDependence packageKey) pureDependencies
+  where (Package.PackageName packageType packageVersion) = Package.name package
+        pureDependencies = Package.pureDependencies package
+        packageRow = Package packageType packageVersion True
+
+getPackageQuery packageName = do package' <- getBy $ UniqueName packageType packageVersion
                                  case package' of
-                                      Nothing -> return ()
-                                      Just package -> do deleteBy $ UniqueLatestName name -- Remove any old latest record
-                                                         insert_ $ Latest name (entityKey package) -- Insert new record with current latest version.
-    where name = fst $ Package.splitPackageName packageName
-
-
---Update the table to set fetched to true
-fetchedQuery name = do package' <- getBy $ UniqueName name
-                       case package' of
-                          Nothing -> return ()
-                          Just package -> update (entityKey package) [PackageSqliteFetched =. True]
-
-isFetchedQuery name = fmap (fmap (packageSqliteFetched . entityVal)) . getBy $ UniqueName name
-
-getInstalledQuery = fmap (map (packageSqliteName . entityVal)) $ selectList [PackageSqliteInstalled ==. True] []
+                                    Nothing -> return Nothing
+                                    (Just package) -> do let packageKey = entityKey package
+                                                         deps <- selectList [PackagePureDependencePackage ==. packageKey] []
+                                                         return . Just $ Package.Package packageName $ map getDep deps
+  where (Package.PackageName packageType packageVersion) = packageName
+        getDep = packagePureDependenceDependant . entityVal
