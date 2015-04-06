@@ -192,7 +192,7 @@ fetchedQuery packageName = do package' <- getBy $ UniqueName packageType package
   where (Package.PackageName packageType packageVersion) = packageName
 
 
-addPackageQuery package = do packageKey' <- insertUnique $ Package packageType packageVersion True
+addPackageQuery package = do packageKey' <- insertUnique $ Package packageType packageVersion False
                              case packageKey' of
                                  Nothing -> return ()
                                  Just packageKey -> insertMany_ $ map (PackagePureDependence packageKey) (toList pureDependencies)
