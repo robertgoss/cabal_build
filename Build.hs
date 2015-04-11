@@ -10,12 +10,13 @@ import qualified System
 
 import Data.Hash
 import Data.Maybe(fromJust,isNothing,isJust)
-import Control.Monad(foldM)
+import Control.Monad(foldM,liftM)
 import Text.Format(format)
 import Data.List(sort,intersperse)
 import Data.Word(Word64)
 
 import Data.Conduit
+import qualified Data.Set as S
 import qualified Data.Conduit.List as CL
 
 import qualified Data.Text as T
@@ -32,13 +33,13 @@ data BuildData = BuildData {
                            }
 
 instance Show BuildData where
-    show buildData | isNothing $ packageDependencies buildData = package buildData ++ " *resolution failed*"
-                   | otherwise = concat $ package buildData : " $ " : (intersperse " " . fromJust . packageDependencies $ buildData)
+    show buildData | isNothing $ packageDependencies buildData = show (package buildData) ++ " *resolution failed*"
+                   | otherwise = concat $ show (package buildData) : " $ " : (intersperse " " . map show . fromJust . packageDependencies $ buildData)
 
 
 --All the other packages which will be installed with a dependency.
 -- Also adds the packagenames of the installed packages on the system.
-type Context = ([Package],[PackageName])
+type Context = S.Set PackageName
 
 --Build dependencies should not count towards hash as equality should be determined by packacge and package dependencies alone
 getId :: BuildData -> BuildId
@@ -47,11 +48,7 @@ getId buildData = asWord64 $ package' `combine` packageDependencies'
           --Sort this  as ordering should not matter for equality.
           packageDependencies' = hash . fmap sort $  packageDependencies buildData
 
-getIdFromPackages :: PackageName -> [PackageName] -> BuildId
-getIdFromPackages name deps = asWord64 $ package' `combine` packageDependencies'
-    where package' = hash name
-          --Sort this list as ordering should not matter for equality.
-          packageDependencies' = hash . fmap sort $  deps
+
 
 data Build = Build BuildData BuildResult
             
@@ -76,82 +73,100 @@ class BuildDatabase db where
 --  First we add all of the builddata for the primary packages then we fold across the build data adding 
 --  it for each sub package.
 fromPackageDatabase :: (PackageDatabase pkgDb, BuildDatabase buildDb) => pkgDb -> IO buildDb
-fromPackageDatabase packageDatabase = do empty <- emptyBuildDatabase
-                                         buildDatabaseWithPackageData <- addAllPrimaryBuildData packageDatabase empty
-                                         buildAll buildDatabaseWithPackageData
+fromPackageDatabase packageDatabase = do buildDb <- emptyBuildDatabase
+                                         addAllPrimaryBuildData packageDatabase buildDb
+                                         buildAll buildDb
+                                         return buildDb
 
 --Sub contructors used internally in this module to construct the package database from the system
 
 --Add the buildData for all the packages in the packageDatabase as primary builds to the 
 -- build database use a fold to update the database over the packagelist
 -- Perform fold in conduit to reduce amount loaded into memory
-addAllPrimaryBuildData :: (PackageDatabase db, BuildDatabase buildDb) => db -> buildDb -> IO buildDb
+addAllPrimaryBuildData :: (PackageDatabase db, BuildDatabase buildDb) => db -> buildDb -> IO ()
 addAllPrimaryBuildData packageDatabase buildDatabase = do nameSource <- packageNameSource packageDatabase
-                                                          nameSource $$ CL.foldM addPrimaryIter buildDatabase -- Fuse together source and fold
-    where addPrimaryIter currBuildDatabase currPackage = do putStrLn currPackage
-                                                            addPrimaryBuildData currPackage packageDatabase currBuildDatabase
+                                                          nameSource $$ CL.mapM_ addPrimaryIter -- Fuse together source and fold
+    where addPrimaryIter currPackage = do putStrLn (show currPackage)
+                                          addPrimaryBuildData currPackage packageDatabase buildDatabase
 
 --Add the buildData for all latest the packages in the packageDatabase as primary builds to the 
 -- build database use a fold to update the database over the packagelist
 -- Perform fold in conduit to reduce amount loaded into memory
-addLatestPrimaryBuildData :: (PackageDatabase db, BuildDatabase buildDb) => db -> buildDb -> IO buildDb
-addLatestPrimaryBuildData packageDatabase buildDatabase = do packageSource <- latestPackageNameSource packageDatabase
-                                                             packageSource $$ CL.foldM addPrimaryIter buildDatabase -- Fuse together source and fold
-    where addPrimaryIter currBuildDatabase currPackage = do putStrLn currPackage
-                                                            addPrimaryBuildData currPackage packageDatabase currBuildDatabase
+addLatestPrimaryBuildData :: (PackageDatabase db, BuildDatabase buildDb) => db -> buildDb -> IO ()
+addLatestPrimaryBuildData packageDatabase buildDatabase = do packageSource <- latestPackageSource packageDatabase
+                                                             packageSource $$ CL.mapM_ addPrimaryIter -- Fuse together source and fold
+    where addPrimaryIter currPackage = do putStrLn (show currPackage)
+                                          addPrimaryBuildData currPackage packageDatabase buildDatabase
 
 
 --Add the buildData of the following primary build and it's dependencies to the database
---  We also add buildId of this build to the primaryMap
 addPrimaryBuildData :: (PackageDatabase db,BuildDatabase buildDb) 
-                       => PackageName -> db -> buildDb -> IO buildDb
-addPrimaryBuildData name packageDatabase buildDatabase = do package <- getPackage packageDatabase name
-                                                            (buildId, newBuildDatabase) <- addBasedOnDeps package
-                                                            addPrimary name buildId newBuildDatabase
-
-    where addBasedOnDeps package = case dependencies package of --Add based on if there has been resolutin failure
-                                       -- The primary build is just a non-primary build data in 
-                                       -- the context given by it's dependencies
-                                       (Dependencies deps) -> do depPkgs <- mapM (getPackage packageDatabase) deps
-                                                                 installed <- getInstalled packageDatabase
-                                                                 let context = (depPkgs, installed)
-                                                                 addNonPrimaryBuildData context package buildDatabase
-                                        --There has been a resolution failure. Add in the stub build
-                                       otherwise -> let stubData = BuildData name Nothing Nothing
-                                                        stubId = getId stubData
-                                                    in do databaseWithId <- addId stubId stubData buildDatabase
-                                                          return (stubId, databaseWithId)
-
-
-
+                       => PackageName -> db -> buildDb -> IO ()
+addPrimaryBuildData packageName pkDb buildDb = do --First get the specific dependency context to build this in
+                                                  depends' <- System.dependencies (show packageName)
+                                                  --See if a dependence error was raise in which case add a stub else 
+                                                  -- Add a non primary with that context
+                                                  buildId <- case depends' of
+                                                               Left _ -> addResolutionFailedBuildData packageName buildDb
+                                                               Right depends -> addNonPrimaryBuildData' pkDb buildDb (makeContext depends) packageName
+                                                  --Add to primary list
+                                                  addPrimary packageName buildId buildDb
+                                                  return ()
+    where makeContext = S.fromList . map fromString
+          --Fiddle addNonPrimaryBuildData to only return the buildId and drop context
+          addNonPrimaryBuildData' p b c n = do res <- addNonPrimaryBuildData p b c n
+                                               return $ fst res
+ 
+--Add the build data of the follwing package o the database where it has failed to resolve
+--Return buildId of build
+addResolutionFailedBuildData :: (BuildDatabase buildDb) => PackageName -> buildDb -> IO BuildId
+addResolutionFailedBuildData packageName buildDb = do addId buildId buildData buildDb
+                                                      addResult buildId ResolutionFailure buildDb
+                                                      return buildId
+      where buildId = getId buildData
+            --Stub buildData
+            buildData = BuildData packageName Nothing Nothing
 
 --Add the buildData of the build of the given package in context and it's dependencies to the database
--- We also return the buildId of this build
--- In this it is assumed that as it is being built in a package context that it has not failed to resolve.
---We first get the build data for the dependencies
-addNonPrimaryBuildData :: BuildDatabase buildDb => Context -> Package  -> buildDb -> IO (BuildId,buildDb)
-addNonPrimaryBuildData context package buildDatabase
-             = do buildExist <- idExists buildDatabase buildId
-                  --We use here the more efficient method of checking the new idExist function to see if data is alredy added
-                  if buildExist then 
-                    return (buildId, buildDatabase)
-                  else
-                    do --Use a fold to keep updating the build database
-                      (dependIds,buildDatabaseDeps) <- foldM depIter ([],buildDatabase) depends
-                      --Use the dependence data to construct the buildData for this package
-                      let buildData = BuildData { package = name,
-                                                  buildDependencies = Just dependIds,
-                                                  packageDependencies = Just . map packageName $ depends
-                                                }
-                      databaseWithId <- addId buildId buildData buildDatabaseDeps
-                      return (buildId, databaseWithId)
-          
-  where depends = getDependenciesFromContext context package
-        buildId = getIdFromPackages name . map packageName $ depends
-        name = packageName package
-        newContext = (depends, snd context)
-        depIter (depIds,depDb) depPkg = do (depId,dbDep) <- addNonPrimaryBuildData newContext depPkg depDb
-                                           return(depId:depIds, dbDep)
+-- We also return the context that this build is built in.
+-- Note the recursion in this is highly inefficient with the bottom layer packages being called 
+-- repeatedly by ones with greater dependencies. 
+addNonPrimaryBuildData :: (PackageDatabase db,BuildDatabase buildDb) 
+                         => db -> buildDb -> Context -> PackageName -> IO (BuildId,Context) 
+addNonPrimaryBuildData pkDb buildDb context packageName = do package <- liftM fromJust $ getPackage pkDb packageName
+                                                             --Add each of the pure dependencies in context 
+                                                             let pureDepends = pureDependencies package
+                                                                 --Get the name of the packages which make up the pure depends
+                                                                 pureDependsNames = S.map (getNameFromContext context) pureDepends
+                                                             pureDependResults <- mapM (addNonPrimaryBuildData pkDb buildDb context) $ S.toList pureDependsNames
+                                                             let pureDependIds = map fst pureDependResults -- BuildIds of each pure build.
+                                                                 pureDependContexts = map snd pureDependResults -- Contexts for each dep build
+                                                                 --We take the union of the contexts in each individual dependent
+                                                                 -- to get the full list context for this package also add the dependent package names
+                                                                 -- as their adding will not neccesarrily add them.
+                                                                 packageContext = pureDependsNames `S.union` (S.unions pureDependContexts)
+                                                                 packageDependencies = S.toList packageContext
+                                                             --Get all of the build dependencies of the pure dependencies 
+                                                             pureDependsData <- mapM (getData buildDb) pureDependIds
+                                                             let pureDependBuildDeps = map (fromJust . buildDependencies) pureDependsData
+                                                                 --Combine to get the full set of build dependencies
+                                                                 packageBuildDependencies = combineDependencies $ pureDependIds:pureDependBuildDeps
+                                                                 --Construct build data
+                                                                 buildData = BuildData packageName (Just packageDependencies) (Just packageBuildDependencies)
+                                                                 --Get build id for this build
+                                                                 buildId = getId buildData
+                                                             --Add the data to the database and return
+                                                             addId buildId buildData buildDb 
+                                                             return (buildId, packageContext)
+                                                                 
+   where getNameFromContext context pType = head . S.toList $ S.filter (isType pType) context
+         isType pType (PackageName nameType _) = pType == nameType
+         combineDependencies :: [[BuildId]] -> [BuildId]
+         combineDependencies deps = S.toList . S.unions $ map (S.fromList) deps
+
+
+
+
 
 
 
@@ -189,7 +204,7 @@ build' buildId database result bData | result /= NotBuilt = return database
           --Build package on the system and return the result
           -- Register the (now built) dependencies then build package
           buildOnSystem = do mapM_ (registerBuildOnSystem database)  dependenceIds
-                             buildStatus <- System.build packageName buildId
+                             buildStatus <- System.build (show packageName) buildId
                              case buildStatus of
                                 --No errors build was successful
                                 System.BuildSuccess -> addResult buildId BuildSuccess database
@@ -206,7 +221,7 @@ registerBuildOnSystem db buildId = do bData <- getData db buildId
                                           depIds = fromJust . buildDependencies $ bData -- as has been build deps exist
                                       --Register depenencies first
                                       mapM_ (registerBuildOnSystem db) depIds 
-                                      System.register packageName buildId
+                                      System.register (show packageName) buildId
 
 --Helper function build a list of build Ids as in build. But chain together the databases so the final
 -- Database has the results of building all the packages. Use monadinc fold
@@ -220,36 +235,11 @@ buildAll buildDatabase = do buildIds <- allIds buildDatabase
                             let totalBuilds = show $ length buildIds
                             foldM (build' totalBuilds) buildDatabase $ zip indices buildIds
   where build' totalBuilds db (index, buildId) = do buildData <- getData db buildId
-                                                    putStrLn $ format "{0}/{1} - {2}" [show index, totalBuilds, package buildData]
+                                                    putStrLn $ format "{0}/{1} - {2}" [show index, totalBuilds,show (package buildData)]
                                                     build buildId db -- Build needs an argument swap to work with foldM
         indices = [1..] :: [Int]
 
 
---Remove any duplicate entries from a list
-deDuplicate [] = []
-deDuplicate (x:xs) | x `elem` xs = deDuplicate xs
-                   | otherwise = x : deDuplicate xs
-
---Helper functions for constructing a BuildData  
---Filter out only those elements of the context which are dependencies of this package
---Also if and of the dependencies are 
-getDependenciesFromContext :: Context -> Package -> [Package]
-getDependenciesFromContext context package = deDuplicate $ depends ++ installed
-          --A context package is dependent if it is a different version of a known dependency of this package
-    where isDependant depends cPackage = any (differentVersions cPackage) depends
-          -- Get the dependenices of ths packages that have versions in the context dependencies.
-          --As this dependency exists in some context it has a resolution so either it has been found in which case
-          -- We use that or it has not and we use the entire context without this package
-          -- This will definatly contain a resolution and will not cause a regress by recalling this package
-          depends = case dependencies package of
-                       Dependencies deps -> filter (isDependant deps) $ contextDeps
-                       ResolutionUnknown -> filter (/=package) $ contextDeps
-          (contextDeps,contextInstalled) = context
-          filteredInstalled = filter (not . differentVersions package) contextInstalled -- To prevent loops we know we a package 
-                                                                                        -- cant depend on a varient of itself.
-          --Packages in the context that appear (as varients) in installed packages 
-          -- our package may also depend on these as its resolution was computed in this context
-          installed = filter (isDependant filteredInstalled) $ contextDeps
 
 
 

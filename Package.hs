@@ -1,5 +1,5 @@
 module Package(PackageType,PackageVersion,
-               PackageName(..), sameType, 
+               PackageName(..), sameType, fromString, 
                Package(..),
                PackageDatabase(..),
                createPackageDatabase,
@@ -15,6 +15,7 @@ import Data.Maybe(fromJust)
 
 import Text.Format(format)
 
+import Data.Hash
 import Data.Conduit
 import qualified Data.Conduit.List as CL
 
@@ -32,6 +33,9 @@ data PackageName = PackageName PackageType PackageVersion
 instance Show PackageName where
   show (PackageName pType pVersion) = pType ++ "-" ++ stringVersion
     where stringVersion = concat . intersperse "." $ map show pVersion
+
+instance Hashable PackageName where
+  hash (PackageName pType version) = hash pType `combine` hash version
 
 
 --Construct a packageName from a string
