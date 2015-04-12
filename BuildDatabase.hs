@@ -35,6 +35,10 @@ import qualified Data.Set as Set
 
 import qualified Data.Text as T
 
+--Package Name - 
+--To be stored in persist we will use String and convert to and from using show/fromString
+type PackageName = String
+
 --Indexes 
 
 --persistent cannot create objects for speed should have them on:
@@ -49,7 +53,7 @@ import qualified Data.Text as T
 -- This may not be the best way but closly follows the in memory method
 share [mkPersist sqlSettings, mkMigrate "migrateAll"] [persistLowerCase|
 BuildData
-    package Package.PackageName --Store the full package name
+    package PackageName --Store the full package name
     resolutionFailed Bool -- Stores if a resolution has failed
     buildHash Build.BuildId
     nDepends Int -- Stores a cache of the number of dependencies.
@@ -61,7 +65,7 @@ BuildResult
     UniqueResultId buildId
     deriving Show
 BuildPrimary
-    package Package.PackageName
+    package PackageName
     buildId Build.BuildId 
     UniquePackage package 
     deriving Show
@@ -70,7 +74,7 @@ BuildDependence -- Expresses relation of a build being dependant on another.
     dependant Build.BuildId
 BuildPackageDependence -- Expresses relation of a build being dependant on a package.
     build BuildDataId
-    dependant Package.PackageName
+    dependant PackageName
     deriving Show
 |] 
 
@@ -173,13 +177,13 @@ getDataQuery buildId = do entity <- fmap fromJust $ getBy $ UniqueId buildId
                               package = buildDataPackage val
                               resFailed = buildDataResolutionFailed val
                           --If resolution failed we can return now else get the dependencies
-                          if resFailed then return $ Build.BuildData package Nothing Nothing
+                          if resFailed then return $ Build.BuildData (Package.fromString package) Nothing Nothing
                           else do bDependencies' <- selectList [BuildDependenceBuild ==. buildDataId] []
                                   pDependencies' <- selectList [BuildPackageDependenceBuild ==. buildDataId] []
                                   --Get build and ackage dependance entities.
                                   let bDependencies = map (buildDependenceDependant . entityVal) bDependencies'
-                                      pDependencies = map (buildPackageDependenceDependant . entityVal) pDependencies'
-                                  return $ Build.BuildData package (Just pDependencies) (Just bDependencies)
+                                      pDependencies = map (Package.fromString . buildPackageDependenceDependant . entityVal) pDependencies'
+                                  return $ Build.BuildData (Package.fromString package) (Just pDependencies) (Just bDependencies)
 
 --Add id by construction sqlite build data and inserting it
 --Guard against repeat adds -> The guard now performed by set in database
@@ -193,9 +197,9 @@ addIdQuery buildId buildData = do buildSqliteId <- insertUnique buildDataSqlite
                                                        otherwise -> do insertMany_ . map (BuildDependence bid) $ deps -- If there are dependencies insert relations 
                                                                        insertMany_ . map (BuildPackageDependence bid) $ pDeps
 
-    where package' = Build.package buildData
+    where package' = show $ Build.package buildData
           buildDependencies' = Build.buildDependencies buildData
-          packageDependencies' = Build.packageDependencies buildData
+          packageDependencies' = fmap (map show) $ Build.packageDependencies buildData
           resFailure = buildDependencies' == Nothing -- A resolution has failed if buildDependencies contains nothing
           buildDataSqlite = BuildData package' resFailure buildId nDeps-- The buildData
           --From just dep and pdeps -- only use after resolution shown to exist
@@ -210,7 +214,7 @@ addResultQuery buildId buildResult = do entity <- fmap fromJust $ getBy $ Unique
                                         update (entityKey entity) [BuildResultBuildResult =. buildResult]
 
 --Insert a link by constructing an element of the primary table
-addPrimaryQuery package buildId = insert $ BuildPrimary package buildId
+addPrimaryQuery package buildId = insert $ BuildPrimary (show package) buildId
 
 --See just if this id exists in the database
 idExistsQuery buildId = fmap isJust . getBy $ UniqueId buildId
