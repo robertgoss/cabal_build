@@ -9,7 +9,7 @@ import BuildResult
 import qualified System
 
 import Data.Hash
-import Data.Maybe(fromJust,isNothing,isJust)
+import Data.Maybe(fromJust,isNothing,isJust,mapMaybe,listToMaybe)
 import Control.Monad(foldM,liftM)
 import Text.Format(format)
 import Data.List(sort,intersperse)
@@ -133,18 +133,19 @@ addResolutionFailedBuildData packageName buildDb = do addId buildId buildData bu
 -- repeatedly by ones with greater dependencies. 
 addNonPrimaryBuildData :: (PackageDatabase db,BuildDatabase buildDb) 
                          => db -> buildDb -> Context -> PackageName -> IO (BuildId,Context) 
-addNonPrimaryBuildData pkDb buildDb context packageName = do package <- liftM fromJust $ getPackage pkDb packageName
+addNonPrimaryBuildData pkDb buildDb context packageName = do package <- trace ("AddNonPrimary" ++ show packageName) $ liftM fromJust $ getPackage pkDb packageName
                                                              --Add each of the pure dependencies in context 
                                                              let pureDepends = pureDependencies package
                                                                  --Get the name of the packages which make up the pure depends
-                                                                 pureDependsNames = S.map (getNameFromContext context) pureDepends
-                                                             pureDependResults <- mapM (addNonPrimaryBuildData pkDb buildDb context) $ S.toList pureDependsNames
+                                                                 --Igonre all pure depends that are installed or virtual
+                                                                 pureDependsNames = mapMaybe (getNameFromContext context) $ S.toList pureDepends
+                                                             pureDependResults <- mapM (addNonPrimaryBuildData pkDb buildDb context) pureDependsNames
                                                              let pureDependIds = map fst pureDependResults -- BuildIds of each pure build.
                                                                  pureDependContexts = map snd pureDependResults -- Contexts for each dep build
                                                                  --We take the union of the contexts in each individual dependent
                                                                  -- to get the full list context for this package also add the dependent package names
                                                                  -- as their adding will not neccesarrily add them.
-                                                                 packageContext = pureDependsNames `S.union` (S.unions pureDependContexts)
+                                                                 packageContext = (S.fromList pureDependsNames) `S.union` (S.unions pureDependContexts)
                                                                  packageDependencies = S.toList packageContext
                                                              --Get all of the build dependencies of the pure dependencies 
                                                              pureDependsData <- mapM (getData buildDb) pureDependIds
@@ -159,7 +160,9 @@ addNonPrimaryBuildData pkDb buildDb context packageName = do package <- liftM fr
                                                              addId buildId buildData buildDb 
                                                              return (buildId, packageContext)
                                                                  
-   where getNameFromContext context pType = head . S.toList $ S.filter (isType pType) context
+   where --Wrap in a maybe as if a package is installed it will not be in the context
+         --In this case return nothing
+         getNameFromContext context pType = listToMaybe . S.toList $ S.filter (isType pType) context
          isType pType (PackageName nameType _) = pType == nameType
          combineDependencies :: [[BuildId]] -> [BuildId]
          combineDependencies deps = S.toList . S.unions $ map (S.fromList) deps
