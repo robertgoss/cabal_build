@@ -15,6 +15,8 @@ import Text.Format(format)
 import Data.List(sort,intersperse)
 import Data.Word(Word64)
 
+import qualified Data.Map as Map
+
 import Data.Conduit
 import qualified Data.Set as S
 import qualified Data.Conduit.List as CL
@@ -127,48 +129,72 @@ addResolutionFailedBuildData packageName buildDb = do addId buildId buildData bu
             --Stub buildData
             buildData = BuildData packageName Nothing Nothing
 
+--A type to cache adding build data.
+--Takes a 
+type BuildCache = Map.Map PackageName (BuildId,Context)
+
 --Add the buildData of the build of the given package in context and it's dependencies to the database
--- We also return the context that this build is built in.
--- Note the recursion in this is highly inefficient with the bottom layer packages being called 
--- repeatedly by ones with greater dependencies. 
+-- We return the build Id of this build
 addNonPrimaryBuildData :: (PackageDatabase db,BuildDatabase buildDb) 
                          => db -> buildDb -> Context -> PackageName -> IO (BuildId,Context) 
-addNonPrimaryBuildData pkDb buildDb context packageName = do package <- liftM fromJust $ getPackage pkDb packageName
-                                                             --Add each of the pure dependencies in context 
-                                                             --Some packages have a self dependency - due to executables filter these out
-                                                             let pureDepends = S.filter notSelf $ pureDependencies package
-                                                                 --Get the name of the packages which make up the pure depends
-                                                                 --Igonre all pure depends that are installed or virtual
-                                                                 pureDependsNames = mapMaybe (getNameFromContext context) $ S.toList pureDepends
-                                                             pureDependResults <- mapM (addNonPrimaryBuildData pkDb buildDb context) pureDependsNames
-                                                             let pureDependIds = map fst pureDependResults -- BuildIds of each pure build.
-                                                                 pureDependContexts = map snd pureDependResults -- Contexts for each dep build
-                                                                 --We take the union of the contexts in each individual dependent
-                                                                 -- to get the full list context for this package also add the dependent package names
-                                                                 -- as their adding will not neccesarrily add them.
-                                                                 packageContext = (S.fromList pureDependsNames) `S.union` (S.unions pureDependContexts)
-                                                                 packageDependencies = S.toList packageContext
-                                                             --Get all of the build dependencies of the pure dependencies 
-                                                             pureDependsData <- mapM (getData buildDb) pureDependIds
-                                                             let pureDependBuildDeps = map (fromJust . buildDependencies) pureDependsData
-                                                                 --Combine to get the full set of build dependencies
-                                                                 packageBuildDependencies = combineDependencies $ pureDependIds:pureDependBuildDeps
-                                                                 --Construct build data
-                                                                 buildData = BuildData packageName (Just packageDependencies) (Just packageBuildDependencies)
-                                                                 --Get build id for this build
-                                                                 buildId = getId buildData
-                                                             --Add the data to the database and return
-                                                             addId buildId buildData buildDb 
-                                                             return (buildId, packageContext)
+addNonPrimaryBuildData pkgDb buildDb context packageName = do cache <- addNonPrimaryBuildDataCached pkgDb buildDb context packageName [] Map.empty
+                                                              return . fromJust $ Map.lookup packageName cache
+--A cached version of addNonPrimaryBuildData
+--Add the buildData of the build of the given package in context and it's dependencies to the database
+--Accepts a cache of packages that have been added so far and returns the updated cache after it has run
+--If a package is in the cache no actions are performed
+--The list of package types give a list of the recursions that the package has been called under to break any accidental 
+-- cycles n resolution
+addNonPrimaryBuildDataCached :: (PackageDatabase db,BuildDatabase buildDb) 
+                         => db -> buildDb -> Context -> PackageName -> [PackageType] -> BuildCache -> IO BuildCache 
+addNonPrimaryBuildDataCached pkDb buildDb context packageName recursionList cache 
+      | packageName `Map.member` cache = return cache -- Package is in cache nothing to do
+      | otherwise            = do package <- liftM fromJust $ getPackage pkDb packageName
+                                  --Add each of the pure dependencies in context 
+                                  --Some packages have a self dependency - due to executables filter these out
+                                  --Filter out any package whose type is in the recusrive call list. 
+                                  -- This breaks accidental cycles as pure dependencies can include 
+                                  -- Extra dependencies for eg tests.
+                                  let pureDepends = S.filter notInRecursionHistory $ pureDependencies package
+                                      --Get the name of the packages which make up the pure depends
+                                      --Igonre all pure depends that are installed or virtual
+                                      pureDependsNames = mapMaybe (getNameFromContext context) $ S.toList pureDepends
+                                  dependentsCache <- foldM addNonPrimaryBuildDataCachedRecurse cache pureDependsNames
+                                      --Get the dependent buildIds and dependents from the build cache.
+                                  let pureDependResults = map (\k -> fromJust $ Map.lookup k dependentsCache) pureDependsNames  
+                                      pureDependIds = map fst pureDependResults -- BuildIds of each pure build.
+                                      pureDependContexts = map snd pureDependResults -- Contexts for each dep build
+                                      --We take the union of the contexts in each individual dependent
+                                     -- to get the full list context for this package also add the dependent package names
+                                     -- as their adding will not neccesarrily add them.
+                                      packageContext = (S.fromList pureDependsNames) `S.union` (S.unions pureDependContexts)
+                                      packageDependencies = S.toList packageContext
+                                  --Get all of the build dependencies of the pure dependencies 
+                                  pureDependsData <- mapM (getData buildDb) pureDependIds
+                                  let pureDependBuildDeps = map (fromJust . buildDependencies) pureDependsData
+                                      --Combine to get the full set of build dependencies
+                                      packageBuildDependencies = combineDependencies $ pureDependIds:pureDependBuildDeps
+                                      --Construct build data
+                                      buildData = BuildData packageName (Just packageDependencies) (Just packageBuildDependencies)
+                                      --Get build id for this build
+                                      buildId = getId buildData
+                                  --Add the data to the database and return
+                                  addId buildId buildData buildDb 
+                                  --Update the build cache with this package
+                                  let updatedCache = Map.insert packageName (buildId, packageContext) dependentsCache
+                                  return updatedCache
                                                                  
    where (PackageName selfType _) = packageName
-         notSelf pType = pType /= selfType 
+         notInRecursionHistory pType = pType `notElem` fullRecursionList
+         fullRecursionList = selfType : recursionList
          --Wrap in a maybe as if a package is installed it will not be in the context
          --In this case return nothing
          getNameFromContext context pType = listToMaybe . S.toList $ S.filter (isType pType) context
          isType pType (PackageName nameType _) = pType == nameType
          combineDependencies :: [[BuildId]] -> [BuildId]
          combineDependencies deps = S.toList . S.unions $ map (S.fromList) deps
+         --
+         addNonPrimaryBuildDataCachedRecurse prevCache currPackage = addNonPrimaryBuildDataCached pkDb buildDb context currPackage fullRecursionList prevCache
 
 
 
