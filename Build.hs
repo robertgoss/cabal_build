@@ -133,9 +133,10 @@ addResolutionFailedBuildData packageName buildDb = do addId buildId buildData bu
 -- repeatedly by ones with greater dependencies. 
 addNonPrimaryBuildData :: (PackageDatabase db,BuildDatabase buildDb) 
                          => db -> buildDb -> Context -> PackageName -> IO (BuildId,Context) 
-addNonPrimaryBuildData pkDb buildDb context packageName = do package <- trace ("AddNonPrimary" ++ show packageName) $ liftM fromJust $ getPackage pkDb packageName
+addNonPrimaryBuildData pkDb buildDb context packageName = do package <- liftM fromJust $ getPackage pkDb packageName
                                                              --Add each of the pure dependencies in context 
-                                                             let pureDepends = pureDependencies package
+                                                             --Some packages have a self dependency - due to executables filter these out
+                                                             let pureDepends = S.filter notSelf $ pureDependencies package
                                                                  --Get the name of the packages which make up the pure depends
                                                                  --Igonre all pure depends that are installed or virtual
                                                                  pureDependsNames = mapMaybe (getNameFromContext context) $ S.toList pureDepends
@@ -160,7 +161,9 @@ addNonPrimaryBuildData pkDb buildDb context packageName = do package <- trace ("
                                                              addId buildId buildData buildDb 
                                                              return (buildId, packageContext)
                                                                  
-   where --Wrap in a maybe as if a package is installed it will not be in the context
+   where (PackageName selfType _) = packageName
+         notSelf pType = pType /= selfType 
+         --Wrap in a maybe as if a package is installed it will not be in the context
          --In this case return nothing
          getNameFromContext context pType = listToMaybe . S.toList $ S.filter (isType pType) context
          isType pType (PackageName nameType _) = pType == nameType
