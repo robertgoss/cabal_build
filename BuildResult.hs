@@ -3,7 +3,6 @@ module BuildResult(BuildResult(..)) where
 
 import Database.Persist
 import Database.Persist.TH
-import Database.Persist.Sqlite
 
 import qualified Data.Text as T
 
