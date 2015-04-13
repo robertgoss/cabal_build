@@ -12,7 +12,7 @@ import Data.Hash
 import Data.Maybe(fromJust,isNothing,isJust,mapMaybe,listToMaybe)
 import Control.Monad(foldM,liftM)
 import Text.Format(format)
-import Data.List(sort,intersperse)
+import Data.List(sort,intersperse,sortBy)
 import Data.Word(Word64)
 
 import qualified Data.Map as Map
@@ -235,7 +235,7 @@ build' buildId database result bData | result /= NotBuilt = return database
           packageName = package $ bData
           --Build package on the system and return the result
           -- Register the (now built) dependencies then build package
-          buildOnSystem = do mapM_ (registerBuildOnSystem database)  dependenceIds
+          buildOnSystem = do registerBuildsOnSystem database dependenceIds
                              buildStatus <- System.build (show packageName) buildId
                              case buildStatus of
                                 --No errors build was successful
@@ -246,14 +246,16 @@ build' buildId database result bData | result /= NotBuilt = return database
                                 System.BuildError outText errText -> addResult buildId (BuildFail outText errText) database
 
 
---Registers a build with the system use the given packageName and differentiate it with the buildid
-registerBuildOnSystem :: (BuildDatabase db) => db ->  BuildId -> IO ()
-registerBuildOnSystem db buildId = do bData <- getData db buildId
-                                      let packageName = package $ bData
-                                          depIds = fromJust . buildDependencies $ bData -- as has been build deps exist
-                                      --Register depenencies first
-                                      mapM_ (registerBuildOnSystem db) depIds 
-                                      System.register (show packageName) buildId
+--Registers a list of build with the system use the given packageName and differentiate it with the buildid
+registerBuildsOnSystem :: (BuildDatabase db) => db ->  [BuildId] -> IO ()
+registerBuildsOnSystem db buildIds = do bDatas <- mapM (getData db) buildIds
+                                        --Make sure we register in the correct order so a package is registered after its dependents
+                                        -- Do this by ordering by size the number of dependents 
+                                        let sortedBDatas = sortBy compareNDeps bDatas
+                                        mapM_ registerBData sortedBDatas
+    where registerBData bData = System.register (show $ package bData) (getId bData)
+          compareNDeps bData1 bData2 = (nDeps bData1) `compare` (nDeps bData2)
+          nDeps = length . fromJust . packageDependencies
 
 --Helper function build a list of build Ids as in build. But chain together the databases so the final
 -- Database has the results of building all the packages. Use monadinc fold
