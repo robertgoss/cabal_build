@@ -215,12 +215,10 @@ cleanCabalSystem = shelly . silently $ cleanCabalSystemSh
 -- It is essential that this does not affect the ability to register a package
 -- Assumes that we are in the correct directory
 cleanBuildDirectorySh :: Sh ()
-cleanBuildDirectorySh = do run_ "find" [".","-name","setup","-type","f","-exec","rm {} \;"] --Remove setup data which remains if build fails
+cleanBuildDirectorySh = do run_ "find" [".","-name","setup","-type","f","-exec","rm","{}",";"] --Remove setup data which remains if build fails
                            --Remove build files which are now unneeded
-                           run_ "find" [".","-name","*.o","-exec","rm {} \;"]
-                           run_ "find" [".","-name","*.hi","-exec","rm {} \;"] 
-                           run_ "find" [".","-name","*.dyn_o","-exec","rm {} \;"]
-                           run_ "find" [".","-name","*.dyn_hi","-exec","rm {} \;"]
+                           run_ "find" [".","-name","*.o","-exec","rm","{}",";"]
+                           run_ "find" [".","-name","*.dyn_o","-exec","rm","{}",";"]
 
 
 --Remove the ghc director to nuke the package database
